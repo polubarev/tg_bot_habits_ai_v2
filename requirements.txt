@@ -1,0 +1,8 @@
+pyTelegramBotAPI
+PyYAML
+openai
+schedule
+yaml
+jsonschema
+pandas
+openpyxl
