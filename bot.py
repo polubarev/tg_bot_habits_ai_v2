@@ -2,14 +2,18 @@ import os
 import yaml
 import json
 import datetime
-from openai import OpenAI  # Import OpenAI client
+from openai import OpenAI
 import telebot
 import schedule
 import threading
 import time
 import logging
-from telebot import types  # Import types for custom keyboards
-import pandas as pd  # Import pandas for data processing
+from telebot import types
+import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from dateutil.parser import parse
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -42,6 +46,47 @@ active_users = set()
 # Create a global keyboard with command buttons
 command_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
 command_markup.add('/habits', '/manual', '/help')
+
+
+# Function to upload the DataFrame to Google Sheets
+def upload_to_google_sheets(df):
+    logging.info("Uploading report to Google Sheets.")
+    # Define the scope
+    scope = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        # 'https://spreadsheets.google.com/feeds',
+        'https://www.googleapis.com/auth/drive'
+    ]
+
+    # Provide the path to your service account key file
+    creds = ServiceAccountCredentials.from_json_keyfile_name('striking-domain-430417-u3-bcf2406d6bcb.json', scope)
+
+    # Authorize the client
+    client_google = gspread.authorize(creds)
+
+    # Open the Google Sheet by name or URL
+    try:
+        sheet = client_google.open("Diary").sheet1  # Assuming you want to update the first sheet
+    except Exception as e:
+        logging.error(f"Error opening Google Sheet: {e}")
+        return
+
+    # Clear the existing content in the sheet
+    try:
+        sheet.clear()
+    except Exception as e:
+        logging.error(f"Error clearing Google Sheet: {e}")
+        return
+
+    # Convert DataFrame to a list of lists
+    data = [df.columns.values.tolist()] + df.values.tolist()
+
+    # Update the sheet with the data
+    try:
+        sheet.update(range_name='A1', values=data)
+        logging.info("Google Sheet has been updated successfully.")
+    except Exception as e:
+        logging.error(f"Error updating Google Sheet: {e}")
 
 
 def parse_habit_properties(habits_config):
@@ -398,9 +443,10 @@ def generate_excel_report():
 
             # Convert the `datetime` object to a string in the desired format
             date_time_str = date_time.strftime('%Y-%m-%d %H:%M:%S')
+            date_str = date_time.strftime('%Y-%m-%d')
 
             # Flatten JSON data and add date and user_id
-            flat_data = {'date': date_time_str, 'user_id': user_id_str}
+            flat_data = {'datetime': date_time_str, 'date': date_str, 'user_id': user_id_str}
             flat_data.update(json_data)
             data.append(flat_data)
         except Exception as e:
@@ -414,10 +460,12 @@ def generate_excel_report():
     df = pd.DataFrame(data)
 
     # Sort data by date and user_id
-    df.sort_values(by=['date', 'user_id'], inplace=True)
+    df.sort_values(by=['datetime', 'user_id'], inplace=True)
 
     # Remove duplicates for each user and date, keeping the latest entry
     df = df.drop_duplicates(subset=['date', 'user_id'], keep='last')
+
+    df.fillna('', inplace=True)
 
     # Write DataFrame to Excel
     os.makedirs('reports', exist_ok=True)
@@ -427,6 +475,9 @@ def generate_excel_report():
         logging.info(f"Excel report generated at {excel_file}")
     except Exception as e:
         logging.error(f"Error writing to Excel file: {e}")
+
+    # Upload to Google Sheets
+    upload_to_google_sheets(df)
 
 
 
@@ -443,7 +494,7 @@ schedule.every().day.at(REMINDER_TIME).do(send_reminders)
 REPORT_GENERATION_TIME = '17:16'
 schedule.every().day.at(REPORT_GENERATION_TIME).do(generate_excel_report)
 
-
+generate_excel_report()
 if __name__ == '__main__':
     # Start the scheduler in a separate thread
     threading.Thread(target=schedule_checker).start()

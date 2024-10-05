@@ -6,3 +6,5 @@ yaml
 jsonschema
 pandas
 openpyxl
+gspread
+oauth2client
