@@ -210,6 +210,11 @@ python bot.py
 - **Error Handling**: The bot includes logging for debugging purposes. Logs are printed to the console.
 - **Extensibility**: You can add new habits or modify existing ones by updating the `config.yaml` file.
 
+## TODO
+- [ ] option to cancel habits entering process
+- [ ] option to chose date of diary (to have an option write diary for previous dates)
+- [ ] option to add and remove habits from the UI of bot and not config file
+
 ## Contributing
 
 If you'd like to contribute to this project, please fork the repository and submit a pull request.

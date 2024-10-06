@@ -12,7 +12,6 @@ from telebot import types
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from dateutil.parser import parse
 
 
 # Set up logging
