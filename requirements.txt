@@ -1,0 +1,11 @@
+pyTelegramBotAPI
+PyYAML
+openai
+yaml
+jsonschema
+pandas
+openpyxl
+gspread
+oauth2client
+APScheduler
+pytz

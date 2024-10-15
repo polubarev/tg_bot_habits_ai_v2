@@ -12,7 +12,7 @@ from telebot import types
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-
+from dateutil.parser import parse
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -37,6 +37,8 @@ AWAITING_INPUT = 'AWAITING_INPUT'
 CONFIRMING = 'CONFIRMING'
 EDITING = 'EDITING'
 MANUAL_INPUT = 'MANUAL_INPUT'
+SELECTING_DATE = 'SELECTING_DATE'
+AWAITING_CUSTOM_DATE = 'AWAITING_CUSTOM_DATE'
 
 user_states = {}
 user_data = {}
@@ -44,7 +46,8 @@ active_users = set()
 
 # Create a global keyboard with command buttons
 command_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-command_markup.add('/habits', '/manual', '/help')
+command_markup.add('/habits', '/manual')
+command_markup.add('/help', '/cancel')
 
 
 # Function to upload the DataFrame to Google Sheets
@@ -82,7 +85,7 @@ def upload_to_google_sheets(df):
 
     # Update the sheet with the data
     try:
-        sheet.update(range_name='A1', values=data)
+        sheet.update('A1', data)
         logging.info("Google Sheet has been updated successfully.")
     except Exception as e:
         logging.error(f"Error updating Google Sheet: {e}")
@@ -136,36 +139,141 @@ def help_command(message):
     help_text = (
         "Habit Tracker Bot Help:\n"
         "- /start: Start the bot and get a welcome message.\n"
-        "- /habits: Begin tracking your habits by describing your day in text or voice.\n"
+        "- /habits: Begin tracking your habits by describing your day.\n"
         "- /manual: Manually input your habits in JSON format.\n"
+        "- /cancel: Cancel the current habit tracking process.\n"
         "- /help: Show this help message.\n\n"
         "You can select commands using the buttons provided.\n\n"
         "After initiating habit tracking with /habits:\n"
-        "1. Provide a description of your day, including the habits listed.\n"
-        "2. The bot will extract your habits and present them for confirmation.\n"
-        "3. If the data is correct, reply with 'Yes' to save it.\n"
-        "4. If corrections are needed, reply with 'No' and provide corrections in text or voice."
+        "1. Choose the date for your entry.\n"
+        "2. Provide a description of your day, including the habits listed.\n"
+        "3. The bot will extract your habits and present them for confirmation.\n"
+        "4. If the data is correct, reply with 'Yes' to save it.\n"
+        "5. If corrections are needed, reply with 'No' and provide corrections in text or voice."
     )
     bot.send_message(message.chat.id, help_text, reply_markup=command_markup)
+
+
+@bot.message_handler(commands=['cancel'])
+def cancel_command(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} initiated /cancel command.")
+    user_states[user_id] = None
+    user_data[user_id] = {}
+    bot.send_message(
+        message.chat.id,
+        "Your current habit tracking process has been cancelled.",
+        reply_markup=command_markup
+    )
+
+
+def cancel_process(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} cancelled the process.")
+    user_states[user_id] = None
+    user_data[user_id] = {}
+    bot.send_message(
+        message.chat.id,
+        "Your current habit tracking process has been cancelled.",
+        reply_markup=command_markup
+    )
 
 
 @bot.message_handler(commands=['habits'])
 def habits_command(message):
     user_id = message.from_user.id
     logging.info(f"User {user_id} initiated /habits command.")
-    user_states[user_id] = AWAITING_INPUT
+    user_states[user_id] = SELECTING_DATE
     user_data[user_id] = {}
     active_users.add(user_id)
 
-    # Build the habits reminder message with bold habit names
+    # Build the date selection buttons
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('Today', 'Yesterday', 'Custom Date')
+    markup.add('Cancel')
+    markup.add('/habits', '/manual', '/help')
+
+    bot.send_message(
+        message.chat.id,
+        "For which date would you like to record your habits?",
+        reply_markup=markup
+    )
+
+
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == SELECTING_DATE)
+def handle_date_selection(message):
+    user_id = message.from_user.id
+    text = message.text.lower()
+    if text == 'cancel':
+        cancel_process(message)
+        return
+    elif text == 'today':
+        user_data[user_id]['date'] = datetime.datetime.now().strftime('%Y-%m-%d')
+    elif text == 'yesterday':
+        user_data[user_id]['date'] = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    elif text == 'custom date':
+        bot.send_message(
+            message.chat.id,
+            "Please enter the date in YYYY-MM-DD format.",
+            reply_markup=command_markup
+        )
+        user_states[user_id] = AWAITING_CUSTOM_DATE
+        return
+    else:
+        bot.send_message(
+            message.chat.id,
+            "Invalid option. Please select 'Today', 'Yesterday', or 'Custom Date'.",
+            reply_markup=command_markup
+        )
+        return
+
+    # Move to the next state to get user input
+    user_states[user_id] = AWAITING_INPUT
+    prompt_user_for_input(message)
+
+
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == AWAITING_CUSTOM_DATE)
+def handle_custom_date(message):
+    user_id = message.from_user.id
+    if message.text.lower() == 'cancel':
+        cancel_process(message)
+        return
+    try:
+        # Parse the date
+        date = datetime.datetime.strptime(message.text.strip(), '%Y-%m-%d')
+        user_data[user_id]['date'] = date.strftime('%Y-%m-%d')
+        # Move to the next state to get user input
+        user_states[user_id] = AWAITING_INPUT
+        prompt_user_for_input(message)
+    except ValueError:
+        bot.send_message(
+            message.chat.id,
+            "Invalid date format. Please enter the date in YYYY-MM-DD format.",
+            reply_markup=command_markup
+        )
+
+
+def prompt_user_for_input(message):
+    user_id = message.from_user.id
+    # Build the habits reminder message
     habits_list = ""
     for habit_name, habit_info in HABITS_CONFIG.items():
         habits_list += f"- *{habit_name}*: {habit_info['description']}\n"
+    date_str = user_data[user_id]['date']
     reminder_message = (
-        "Please describe your day, either by text or voice message.\n\n"
-        "Please include the following habits:\n" + habits_list
+            f"Please describe your day for {date_str}, either by text or voice message.\n\n"
+            "Please include the following habits:\n" + habits_list
     )
-    bot.send_message(message.chat.id, reminder_message, parse_mode='Markdown', reply_markup=command_markup)
+    # Prepare reply markup
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add('Cancel')
+    markup.add('/habits', '/manual', '/help')
+    bot.send_message(
+        message.chat.id,
+        reminder_message,
+        parse_mode='Markdown',
+        reply_markup=markup
+    )
 
 
 @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == AWAITING_INPUT,
@@ -173,6 +281,9 @@ def habits_command(message):
 def handle_input(message):
     user_id = message.from_user.id
     logging.info(f"User {user_id} is providing input in state AWAITING_INPUT.")
+    if message.text and message.text.lower() == 'cancel':
+        cancel_process(message)
+        return
     if message.voice:
         user_input = transcribe_voice_message(message)
         if user_input is None:
@@ -183,14 +294,14 @@ def handle_input(message):
 
     user_data[user_id]['user_input'] = user_input
 
-    # Prepare the function parameters for GPT-4o-mini function calling
+    # Prepare the function parameters for GPT-3.5 function calling
     function_parameters = {
         "type": "object",
         "properties": habit_properties,
         "required": required_habits
     }
 
-    # Process input with GPT-4o-mini
+    # Process input with GPT-3.5
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -231,6 +342,7 @@ def handle_input(message):
     # Prepare the 'Yes' and 'No' buttons along with command buttons
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row('Yes', 'No')
+    markup.add('Cancel')
     markup.add('/habits', '/manual', '/help')
 
     bot.send_message(
@@ -247,11 +359,15 @@ def confirm(message):
     user_id = message.from_user.id
     logging.info(f"User {user_id} is in CONFIRMING state.")
     user_response = message.text.lower()
-    if user_response == 'yes':
+    if user_response == 'cancel':
+        cancel_process(message)
+        return
+    elif user_response == 'yes':
         # Save JSON
         os.makedirs(DATA_DIR, exist_ok=True)
-        date_str = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        file_path = os.path.join(DATA_DIR, f"{date_str}_{user_id}.json")
+        date_str = user_data[user_id].get('date', datetime.datetime.now().strftime('%Y-%m-%d'))
+        timestamp = datetime.datetime.now().strftime('%H-%M-%S')
+        file_path = os.path.join(DATA_DIR, f"{date_str}_{timestamp}_{user_id}.json")
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(user_data[user_id]['json_output'])
         bot.send_message(message.chat.id, "Your habits have been saved. Thank you!", reply_markup=command_markup)
@@ -271,6 +387,9 @@ def confirm(message):
 def edit(message):
     user_id = message.from_user.id
     logging.info(f"User {user_id} is providing corrections in EDITING state.")
+    if message.text and message.text.lower() == 'cancel':
+        cancel_process(message)
+        return
     if message.voice:
         correction = transcribe_voice_message(message)
         if correction is None:
@@ -279,14 +398,14 @@ def edit(message):
     else:
         correction = message.text
 
-    # Prepare the function parameters for GPT-4o-mini function calling
+    # Prepare the function parameters for GPT-3.5 function calling
     function_parameters = {
         "type": "object",
         "properties": habit_properties,
         "required": required_habits
     }
 
-    # Send correction back to GPT-4o-mini along with previous input and output
+    # Send correction back to GPT-3.5 along with previous input and output
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -329,6 +448,7 @@ def edit(message):
     # Prepare the 'Yes' and 'No' buttons along with command buttons
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row('Yes', 'No')
+    markup.add('Cancel')
     markup.add('/habits', '/manual', '/help')
 
     bot.send_message(
@@ -353,13 +473,17 @@ def manual_input_prompt(message):
 def manual_input(message):
     user_id = message.from_user.id
     logging.info(f"User {user_id} is providing manual input.")
+    if message.text and message.text.lower() == 'cancel':
+        cancel_process(message)
+        return
     json_text = message.text
     try:
         json_data = json.loads(json_text)
         user_data[user_id]['json_output'] = json.dumps(json_data, ensure_ascii=False, indent=4)
         os.makedirs(DATA_DIR, exist_ok=True)
-        date_str = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        file_path = os.path.join(DATA_DIR, f"{date_str}_{user_id}.json")
+        date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+        timestamp = datetime.datetime.now().strftime('%H-%M-%S')
+        file_path = os.path.join(DATA_DIR, f"{date_str}_{timestamp}_{user_id}.json")
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(user_data[user_id]['json_output'])
         bot.send_message(message.chat.id, "Your manual input has been saved. Thank you!", reply_markup=command_markup)
@@ -400,7 +524,8 @@ def send_reminders():
     logging.info("Sending reminders to active users.")
     for user_id in active_users:
         try:
-            bot.send_message(user_id, "Don't forget to track your habits today! Type /habits to begin.", reply_markup=command_markup)
+            bot.send_message(user_id, "Don't forget to track your habits today! Type /habits to begin.",
+                             reply_markup=command_markup)
             logging.info(f"Reminder sent to user {user_id}.")
         except Exception as e:
             logging.error(f"Failed to send reminder to {user_id}: {e}")
@@ -430,15 +555,11 @@ def generate_excel_report():
             # Extract date and user ID from filename
             basename = os.path.basename(filename)
             date_str, time_str, user_id_with_ext = basename.split('_')
-            date_time_str = date_str + '_' + time_str
+            date_time_str = date_str + ' ' + time_str.replace('-', ':')
             user_id_str = user_id_with_ext.split('.')[0]
 
             # Attempt to parse the date with time
-            try:
-                date_time = datetime.datetime.strptime(date_time_str, '%Y-%m-%d_%H-%M-%S')
-            except ValueError:
-                # If no time is provided, fall back to date-only format
-                date_time = datetime.datetime.strptime(date_time_str, '%Y-%m-%d')
+            date_time = datetime.datetime.strptime(date_time_str, '%Y-%m-%d %H:%M:%S')
 
             # Convert the `datetime` object to a string in the desired format
             date_time_str = date_time.strftime('%Y-%m-%d %H:%M:%S')
@@ -479,7 +600,6 @@ def generate_excel_report():
     upload_to_google_sheets(df)
 
 
-
 def schedule_checker():
     while True:
         schedule.run_pending()
@@ -490,10 +610,12 @@ def schedule_checker():
 schedule.every().day.at(REMINDER_TIME).do(send_reminders)
 
 # Schedule the Excel report generation at a specific time (e.g., 23:59)
-REPORT_GENERATION_TIME = '17:16'
+REPORT_GENERATION_TIME = '23:59'
 schedule.every().day.at(REPORT_GENERATION_TIME).do(generate_excel_report)
 
+# Generate initial report on startup
 generate_excel_report()
+
 if __name__ == '__main__':
     # Start the scheduler in a separate thread
     threading.Thread(target=schedule_checker).start()
