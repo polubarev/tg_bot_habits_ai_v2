@@ -1,5 +1,4 @@
 import os
-import yaml
 import json
 import datetime
 from openai import OpenAI
@@ -12,17 +11,23 @@ from telebot import types
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from dateutil.parser import parse
+from dotenv import load_dotenv
+from validate_config import validate_habits, config_schema
+import jsonschema
+from jsonschema import validate
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load configuration
-with open('config.yaml', 'r', encoding='utf-8') as file:
-    config = yaml.safe_load(file)
+with open('config.json', 'r', encoding='utf-8') as file:
+    config = json.load(file)
 
-TELEGRAM_TOKEN = config['telegram_token']
-OPENAI_API_KEY = config['openai_api_key']
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 HABITS_CONFIG = config['habits']
 REMINDER_TIME = config['reminder_time']
 DATA_DIR = config['data_directory']
@@ -39,6 +44,7 @@ EDITING = 'EDITING'
 MANUAL_INPUT = 'MANUAL_INPUT'
 SELECTING_DATE = 'SELECTING_DATE'
 AWAITING_CUSTOM_DATE = 'AWAITING_CUSTOM_DATE'
+UPDATING_CONFIG = 'UPDATING_CONFIG'
 
 user_states = {}
 user_data = {}
@@ -48,6 +54,7 @@ active_users = set()
 command_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
 command_markup.add('/habits', '/manual')
 command_markup.add('/help', '/cancel')
+command_markup.add('/update_config')  # Add the new command here
 
 
 # Function to upload the DataFrame to Google Sheets
@@ -56,19 +63,18 @@ def upload_to_google_sheets(df):
     # Define the scope
     scope = [
         'https://www.googleapis.com/auth/spreadsheets',
-        # 'https://spreadsheets.google.com/feeds',
         'https://www.googleapis.com/auth/drive'
     ]
 
     # Provide the path to your service account key file
-    creds = ServiceAccountCredentials.from_json_keyfile_name('striking-domain-430417-u3-bcf2406d6bcb.json', scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_name('striking-domain-430417-u3-63469d352d87.json', scope)
 
     # Authorize the client
     client_google = gspread.authorize(creds)
 
     # Open the Google Sheet by name or URL
     try:
-        sheet = client_google.open("Diary").sheet1  # Assuming you want to update the first sheet
+        sheet = client_google.open("Diary_test").sheet1  # Assuming you want to update the first sheet
     except Exception as e:
         logging.error(f"Error opening Google Sheet: {e}")
         return
@@ -85,7 +91,7 @@ def upload_to_google_sheets(df):
 
     # Update the sheet with the data
     try:
-        sheet.update('A1', data)
+        sheet.update(range_name='A1', values=data)
         logging.info("Google Sheet has been updated successfully.")
     except Exception as e:
         logging.error(f"Error updating Google Sheet: {e}")
@@ -142,7 +148,8 @@ def help_command(message):
         "- /habits: Begin tracking your habits by describing your day.\n"
         "- /manual: Manually input your habits in JSON format.\n"
         "- /cancel: Cancel the current habit tracking process.\n"
-        "- /help: Show this help message.\n\n"
+        "- /help: Show this help message.\n"
+        "- /update_config: Update the bot configuration.\n\n"  # Add this line
         "You can select commands using the buttons provided.\n\n"
         "After initiating habit tracking with /habits:\n"
         "1. Choose the date for your entry.\n"
@@ -490,6 +497,57 @@ def manual_input(message):
         logging.info(f"Manual data saved for user {user_id} at {file_path}")
         user_states[user_id] = None
         user_data[user_id] = {}
+    except json.JSONDecodeError as e:
+        logging.error(f"JSON decode error for user {user_id}: {e}")
+        bot.reply_to(message, "Invalid JSON format. Please try again.")
+
+
+@bot.message_handler(commands=['update_config'])
+def update_config_command(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} initiated /update_config command.")
+    user_states[user_id] = UPDATING_CONFIG
+    active_users.add(user_id)
+    
+    # Send current config to the user
+    with open('config.json', 'r', encoding='utf-8') as file:
+        current_config = json.load(file)
+    bot.send_message(
+        message.chat.id,
+        f"Current configuration:\n```json\n{json.dumps(current_config, ensure_ascii=False, indent=4)}\n```\nPlease send the updated configuration in JSON format.",
+        parse_mode='Markdown',
+        reply_markup=command_markup
+    )
+
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == UPDATING_CONFIG)
+def handle_updated_config(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} is providing updated config.")
+    if message.text and message.text.lower() == 'cancel':
+        cancel_process(message)
+        return
+    try:
+        updated_config = json.loads(message.text)
+        
+        # Validate the overall config structure
+        try:
+            validate(instance=updated_config, schema=config_schema)
+        except jsonschema.exceptions.ValidationError as err:
+            bot.reply_to(message, f"Configuration Error: {err.message}")
+            return
+        
+        # Validate habits separately
+        is_valid, errors = validate_habits(updated_config['habits'])
+        if not is_valid:
+            error_messages = "\n".join(errors)
+            bot.reply_to(message, f"Invalid habits configuration:\n{error_messages}")
+            return
+
+        with open('config.json', 'w', encoding='utf-8') as file:
+            json.dump(updated_config, file, ensure_ascii=False, indent=4)
+        bot.send_message(message.chat.id, "Configuration has been updated successfully.", reply_markup=command_markup)
+        logging.info(f"Configuration updated by user {user_id}.")
+        user_states[user_id] = None
     except json.JSONDecodeError as e:
         logging.error(f"JSON decode error for user {user_id}: {e}")
         bot.reply_to(message, "Invalid JSON format. Please try again.")

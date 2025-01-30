@@ -1,7 +1,7 @@
 pyTelegramBotAPI
 PyYAML
 openai
-yaml
+pyyaml
 jsonschema
 pandas
 openpyxl
@@ -9,3 +9,4 @@ gspread
 oauth2client
 APScheduler
 pytz
+schedule
