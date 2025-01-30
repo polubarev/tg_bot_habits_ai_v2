@@ -17,6 +17,9 @@ The Habit Tracker Bot is a Telegram bot that helps you track your daily habits b
 - Python 3.9 or higher
 - Telegram account
 - OpenAI API key
+- Environment variables:
+  - `TELEGRAM_TOKEN`: Your Telegram bot token.
+  - `OPENAI_API_KEY`: Your OpenAI API key.
 
 ### Steps
 
@@ -24,14 +27,12 @@ The Habit Tracker Bot is a Telegram bot that helps you track your daily habits b
 
    ```bash
    git clone https://github.com/yourusername/habit-tracker-bot.git
-   cd habit-tracker-bot
    ```
 
 2. **Create a Virtual Environment (Optional but Recommended)**
 
    ```bash
    python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
    ```
 
 3. **Install Dependencies**
@@ -98,16 +99,16 @@ The `config.json` file contains all the necessary configurations for the bot. Be
 
 ### Fields Explanation
 
-- **telegram_token**: Your Telegram bot token provided by [BotFather](https://core.telegram.org/bots#6-botfather).
-- **openai_api_key**: Your OpenAI API key for accessing GPT models.
+- **telegram\_token**: Your Telegram bot token provided by [BotFather](https://core.telegram.org/bots#6-botfather).
+- **openai\_api\_key**: Your OpenAI API key for accessing GPT models.
 - **habits**: A dictionary of habits you want to track.
   - Each habit has:
     - **type**: The data type of the habit. Can be `string`, `integer`, `boolean`, or a list of types.
     - **description**: A description of the habit.
     - **minimum** (optional): Minimum value for numerical types.
     - **maximum** (optional): Maximum value for numerical types.
-- **reminder_time**: The time when the bot sends you a reminder to track your habits (in `HH:MM` 24-hour format).
-- **data_directory**: The directory where your habit data will be saved.
+- **reminder\_time**: The time when the bot sends you a reminder to track your habits (in `HH:MM` 24-hour format).
+- **data\_directory**: The directory where your habit data will be saved.
 
 ### Filling Out `config.json`
 
@@ -124,8 +125,8 @@ The `config.json` file contains all the necessary configurations for the bot. Be
      }
      ```
 
-     - **your_habit_name**: A unique identifier for your habit (e.g., `reading`).
-     - **your_type**: The data type (`string`, `integer`, `boolean`, or list of types).
+     - **your\_habit\_name**: A unique identifier for your habit (e.g., `reading`).
+     - **your\_type**: The data type (`string`, `integer`, `boolean`, or list of types).
      - **description**: Explain what the habit is about.
 
    - **Example with Constraints**
@@ -157,7 +158,6 @@ The `config.json` file contains all the necessary configurations for the bot. Be
 2. **Reminder Time**
 
    - Set the time when you want to receive daily reminders:
-
      ```json
      "reminder_time": "21:00"
      ```
@@ -165,7 +165,6 @@ The `config.json` file contains all the necessary configurations for the bot. Be
 3. **Data Directory**
 
    - Specify where you want your habit data to be saved:
-
      ```json
      "data_directory": "data/habits/"
      ```
@@ -186,7 +185,6 @@ python validate_config.py
 
 If the script finds any issues, it will display error messages indicating what needs to be fixed.
 
-
 ## Running the Bot
 
 After validating your configuration:
@@ -204,7 +202,8 @@ python bot.py
 - **Extensibility**: You can add new habits or modify existing ones by updating the `config.yaml` file.
 
 ## TODO
-- [ ] 
+
+- [ ]
 
 ## Contributing
 
@@ -213,3 +212,4 @@ If you'd like to contribute to this project, please fork the repository and subm
 ## License
 
 This project is licensed under the MIT License.
+
