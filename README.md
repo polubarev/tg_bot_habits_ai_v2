@@ -1,3 +1,37 @@
+# Habit Tracker Bot v2
+
+## Overview
+A Telegram bot for tracking habits with Google Sheets integration and OpenAI-assisted habit extraction.
+
+## Setup Instructions
+- Create a Google Service Account and set the `SERVICE_ACCOUNT_FILE` variable in your `.env`.
+- Define the following environment variables in your `.env`:
+  - `TELEGRAM_TOKEN_TEST`
+  - `OPENAI_API_KEY`
+  - `SERVICE_ACCOUNT_FILE` (if different from the default)
+- Link your Google Sheet using the `/set_sheet <your_sheet_id>` command.
+- Update your bot’s configuration by sending the updated JSON with `/update_config`.
+
+## Running Locally
+1. Install dependencies:  
+   `pip install -r requirements.txt`
+2. Start the bot:  
+   `python bot.py`
+
+## Running with Docker
+1. Build the Docker image:  
+   `docker build -t habits_bot .`
+2. Run the Docker container:  
+   `docker run -d --env-file .env habits_bot`
+
+## Commands
+- `/start`: Begin interaction with the bot.
+- `/habits`: Record your day's habits.
+- `/manual`: Manually input habit data in JSON format.
+- `/help`: Display help information.
+- `/set_sheet`: Link your Google Sheet.
+- `/update_config`: Update your bot configuration.
+
 # Habit Tracker Bot
 
 The Habit Tracker Bot is a Telegram bot that helps you track your daily habits by conversing with you via text or voice messages. It leverages OpenAI's GPT models to extract habit data from your descriptions and saves them for later analysis.
@@ -204,7 +238,7 @@ python bot.py
 
 ## TODO
 
-- [ ]
+- [ ] 
 
 ## Contributing
 

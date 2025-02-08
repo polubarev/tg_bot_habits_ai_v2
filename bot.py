@@ -15,6 +15,7 @@ from validate_config import validate_habits, config_schema
 import jsonschema
 from jsonschema import validate
 import html  # newly added import to escape HTML characters
+import pytz  # newly added import for timezone handling
 
 # Load environment variables from .env file
 load_dotenv()
@@ -23,10 +24,11 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Use environment variables and default values since local config.json is no longer needed.
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN_TEST')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 FULL_CONFIG = {}  # Full config including "habits" and "reminder_time".
 REMINDER_TIME = "09:00"  # Default reminder time.
+user_timezones = {}  # New global mapping for user time zones
 
 # Google Sheets Service Account configuration
 # The SERVICE_ACCOUNT_FILE can also be set in your .env file.
@@ -684,6 +686,13 @@ def handle_updated_config(message):
         REMINDER_TIME = updated_config.get("reminder_time", REMINDER_TIME)
         habit_properties, required_habits = parse_habit_properties(FULL_CONFIG["habits"])
         
+        # Store user timezone if provided.
+        if "timezone" in updated_config:
+            user_timezones[user_id] = updated_config["timezone"]
+        else:
+            # Default to UTC if not specified.
+            user_timezones[user_id] = "UTC"
+        
         bot.send_message(message.chat.id, "Configuration has been updated successfully.", reply_markup=command_markup)
         logging.info(f"Configuration updated by user {user_id}.")
         user_states[user_id] = None
@@ -759,14 +768,22 @@ def transcribe_voice_message(message):
 
 
 def send_reminders():
-    logging.info("Sending reminders to active users.")
+    logging.info("Checking and sending reminders to active users based on their time zones.")
     for user_id in active_users:
+        # Get the user's time zone; default to UTC if not set.
+        tz_str = user_timezones.get(user_id, "UTC")
         try:
-            bot.send_message(user_id, "Don't forget to track your habits today! Type /habits to begin.",
-                             reply_markup=command_markup)
-            logging.info(f"Reminder sent to user {user_id}.")
+            user_tz = pytz.timezone(tz_str)
         except Exception as e:
-            logging.error(f"Failed to send reminder to {user_id}: {e}")
+            logging.error(f"Invalid timezone for user {user_id}: {tz_str}. Using UTC instead. Error: {e}")
+            user_tz = pytz.utc
+        now = datetime.datetime.utcnow().replace(tzinfo=pytz.utc).astimezone(user_tz)
+        if now.strftime('%H:%M') == REMINDER_TIME:
+            try:
+                bot.send_message(user_id, "Don't forget to track your habits today! Type /habits to begin.", reply_markup=command_markup)
+                logging.info(f"Reminder sent to user {user_id} at local time {now.strftime('%H:%M')} ({tz_str}).")
+            except Exception as e:
+                logging.error(f"Failed to send reminder to {user_id}: {e}")
 
 
 def schedule_checker():
@@ -786,4 +803,4 @@ def ensure_setup(message):
 if __name__ == '__main__':
     threading.Thread(target=schedule_checker).start()
     logging.info("Starting the bot.")
-    bot.polling(none_stop=True) 
+    bot.polling(none_stop=True)
