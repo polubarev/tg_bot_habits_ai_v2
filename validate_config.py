@@ -1,25 +1,7 @@
-import json
-import sys
-import jsonschema
-from jsonschema import validate
 import logging
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Load configuration
-def load_config():
-    try:
-        with open('config.json', 'r', encoding='utf-8') as file:
-            config = json.load(file)
-        return config
-    except FileNotFoundError:
-        logging.error("Error: config.json file not found.")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        logging.error(f"Error parsing config.json: {e}")
-        sys.exit(1)
-
 
 # Define the expected schema for the config file
 config_schema = {
@@ -27,9 +9,8 @@ config_schema = {
     "properties": {
         "habits": {"type": "object"},
         "reminder_time": {"type": "string", "pattern": "^(?:[01]\d|2[0-3]):[0-5]\d$"},
-        "data_directory": {"type": "string"}
     },
-    "required": ["habits", "reminder_time", "data_directory"]
+    "required": ["habits", "reminder_time"]
 }
 
 # Valid types according to OpenAI function calling
@@ -113,24 +94,3 @@ def validate_habits(habits):
         return False, errors
     return True, []
 
-
-def main():
-    config = load_config()
-
-    # Validate the overall config structure
-    try:
-        validate(instance=config, schema=config_schema)
-    except jsonschema.exceptions.ValidationError as err:
-        logging.error(f"Configuration Error: {err.message}")
-        sys.exit(1)
-
-    # Validate habits separately
-    is_valid, errors = validate_habits(config['habits'])
-    if not is_valid:
-        sys.exit(1)
-
-    logging.info("Configuration is valid.")
-
-
-if __name__ == "__main__":
-    main()

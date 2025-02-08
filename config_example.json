@@ -22,6 +22,5 @@
       "description": "A brief summary of your day with correct grammar."
     }
   },
-  "reminder_time": "17:15",
-  "data_directory": "data/habits/"
+  "reminder_time": "17:15"
 }

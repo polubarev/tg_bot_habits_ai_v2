@@ -27,6 +27,7 @@ The Habit Tracker Bot is a Telegram bot that helps you track your daily habits b
 
    ```bash
    git clone https://github.com/yourusername/habit-tracker-bot.git
+   cd habit-tracker-bot
    ```
 
 2. **Create a Virtual Environment (Optional but Recommended)**
