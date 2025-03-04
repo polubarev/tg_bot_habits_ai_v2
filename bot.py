@@ -16,6 +16,8 @@ import jsonschema
 from jsonschema import validate
 import html  # newly added import to escape HTML characters
 import pytz  # newly added import for timezone handling
+import time
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -803,4 +805,9 @@ def ensure_setup(message):
 if __name__ == '__main__':
     threading.Thread(target=schedule_checker).start()
     logging.info("Starting the bot.")
-    bot.polling(none_stop=True)
+    while True:
+        try:
+            bot.polling(none_stop=True, timeout=60)
+        except Exception as e:
+            logging.error(f"Bot polling error: {e}")
+            time.sleep(15)
