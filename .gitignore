@@ -1,11 +1,7 @@
-/config.yaml
-/data/habits/*
-/reports/*
 /.idea
-/striking-domain-430417-u3-bcf2406d6bcb.json
 /test.py
 /bot.log
 /server_snippet.txt
-/client_secret_320533843187-0i7qk3ucn9k4eoosrc2l396o1jki44r7.apps.googleusercontent.com.json
 /.env
-/client_secret_320533843187-bf9rn7vjqe16v3okj2bnpnbkg7lgctgj.apps.googleusercontent.com.json
+/.dockerignore
+/docker_snippets

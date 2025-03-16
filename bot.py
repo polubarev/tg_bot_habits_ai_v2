@@ -6,7 +6,6 @@ import time
 import logging
 import schedule
 import telebot
-import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials  # Updated authorization
 from telebot import types
@@ -16,8 +15,6 @@ import jsonschema
 from jsonschema import validate
 import html  # newly added import to escape HTML characters
 import pytz  # newly added import for timezone handling
-import time
-
 
 # Load environment variables from .env file
 load_dotenv()
@@ -57,6 +54,9 @@ MANUAL_INPUT = 'MANUAL_INPUT'
 SELECTING_DATE = 'SELECTING_DATE'
 AWAITING_CUSTOM_DATE = 'AWAITING_CUSTOM_DATE'
 UPDATING_CONFIG = 'UPDATING_CONFIG'
+DREAM_INPUT = 'DREAM_INPUT'  # New state for dream input
+DREAM_CONFIRMING = 'DREAM_CONFIRMING'  # New state for dream confirmation
+DREAM_EDITING = 'DREAM_EDITING'  # New state for dream editing
 
 user_states = {}
 user_data = {}
@@ -64,12 +64,13 @@ active_users = set()
 
 # Create a global keyboard with command buttons
 command_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-command_markup.add('/habits', '/manual')
+command_markup.add('/habits', '/manual', '/dream')  # Added /dream command
 command_markup.add('/help', '/cancel')
 command_markup.add('/update_config', '/set_sheet')  # Added /set_sheet command
 
 # Add global variable for setup completion tracking
 user_setup_complete = set()
+
 
 # --- Google Sheets helper functions ---
 
@@ -91,21 +92,20 @@ def append_to_user_sheet(user_id, date_val, datetime_val, json_data):
         header = sheet.row_values(1)  # Retrieve header row from the sheet
         row = []
         for col in header:
-            if (col.lower() == "date"):
+            if col.lower() == "date":
                 row.append(date_val)
-            elif (col.lower() == "datetime"):
+            elif col.lower() == "datetime":
                 row.append(datetime_val)
-            elif (col in json_data):
+            elif col in json_data:
                 row.append(json_data[col])
             else:
                 row.append("")
-        sheet.append_row(row)
+        sheet.append_row(row, value_input_option='USER_ENTERED')
         logging.info(f"Appended habit data for user {user_id} to sheet {sheet_id}.")
         return True
     except Exception as e:
         logging.error(f"Error updating sheet for user {user_id}: {e}")
         return False
-
 
 
 def upload_to_google_sheets(df):
@@ -133,7 +133,6 @@ def upload_to_google_sheets(df):
         logging.info("Google Sheet has been updated successfully.")
     except Exception as e:
         logging.error(f"Error updating Google Sheet: {e}")
-
 
 
 # --- End Google Sheets helpers ---
@@ -194,6 +193,7 @@ def help_command(message):
         "- /start: Start the bot and get a welcome message.\n"
         "- /habits: Begin tracking your habits by describing your day.\n"
         "- /manual: Manually input your habits in JSON format.\n"
+        "- /dream: Record your dreams and save them to a separate sheet.\n"  # Added dream command
         "- /cancel: Cancel the current habit tracking process.\n"
         "- /help: Show this help message.\n"
         "- /update_config: Update the bot configuration.\n"
@@ -576,6 +576,7 @@ def update_config_command(message):
             reply_markup=command_markup
         )
 
+
 # Updated helper function to synchronize sheet header (ensure "datetime" and "date" are first):
 def sync_sheet_columns(user_id, updated_config):
     if user_id not in user_sheets:
@@ -604,6 +605,7 @@ def sync_sheet_columns(user_id, updated_config):
             current_header.append(habit)
     sheet.update(values=[current_header], range_name="1:1")
     logging.info(f"Synchronized sheet header for user {user_id} to: {current_header}")
+
 
 # New helper function to aggregate the diary:
 def aggregate_diary(user_id):
@@ -653,12 +655,13 @@ def aggregate_diary(user_id):
         try:
             agg_sheet = spreadsheet.worksheet("Diary")
         except Exception:
-            agg_sheet = spreadsheet.add_worksheet(title="Diary", rows="100", cols=str(len(header)))
+            agg_sheet = spreadsheet.add_worksheet(title="Diary", rows=100, cols=len(header))
         agg_sheet.clear()
-        agg_sheet.update(values=agg_rows, range_name="A1")
-        logging.info(f"Aggregated diary for user {user_id} with {len(agg_rows)-1} records.")
+        agg_sheet.update(values=agg_rows, range_name="A1", value_input_option='USER_ENTERED')
+        logging.info(f"Aggregated diary for user {user_id} with {len(agg_rows) - 1} records.")
     except Exception as e:
         logging.error(f"Error aggregating diary for user {user_id}: {e}")
+
 
 @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == UPDATING_CONFIG)
 def handle_updated_config(message):
@@ -687,14 +690,14 @@ def handle_updated_config(message):
         FULL_CONFIG = updated_config
         REMINDER_TIME = updated_config.get("reminder_time", REMINDER_TIME)
         habit_properties, required_habits = parse_habit_properties(FULL_CONFIG["habits"])
-        
+
         # Store user timezone if provided.
         if "timezone" in updated_config:
             user_timezones[user_id] = updated_config["timezone"]
         else:
             # Default to UTC if not specified.
             user_timezones[user_id] = "UTC"
-        
+
         bot.send_message(message.chat.id, "Configuration has been updated successfully.", reply_markup=command_markup)
         logging.info(f"Configuration updated by user {user_id}.")
         user_states[user_id] = None
@@ -718,15 +721,22 @@ def create_diary_sheets(user_id):
             spreadsheet.worksheet("Diary Raw")
         except Exception:
             # Create with default 100 rows and columns equal to 5 (will be updated later).
-            spreadsheet.add_worksheet(title="Diary Raw", rows="100", cols="5")
+            spreadsheet.add_worksheet(title="Diary Raw", rows=100, cols=5)
         # Create "Diary" if it doesn't exist.
         try:
             spreadsheet.worksheet("Diary")
         except Exception:
-            spreadsheet.add_worksheet(title="Diary", rows="100", cols="5")
-        logging.info(f"Diary worksheets created/verified for user {user_id}.")
+            spreadsheet.add_worksheet(title="Diary", rows=100, cols=5)
+        # Create "Dreams" if it doesn't exist.
+        try:
+            spreadsheet.worksheet("Dreams")
+        except Exception:
+            dreams_sheet = spreadsheet.add_worksheet(title="Dreams", rows=100, cols=3)
+            dreams_sheet.update(values=[["datetime", "date", "dream"]], range_name="A1")
+        logging.info(f"Diary and Dreams worksheets created/verified for user {user_id}.")
     except Exception as e:
         logging.error(f"Error creating diary worksheets for user {user_id}: {e}")
+
 
 # Updated /set_sheet command:
 @bot.message_handler(commands=['set_sheet'])
@@ -740,7 +750,8 @@ def set_sheet(message):
         user_sheets[user_id] = sheet_id
         # Create Diary Raw and Diary worksheets upon linking.
         create_diary_sheets(user_id)
-        bot.send_message(message.chat.id, f"✅ Google Sheet linked successfully! Sheet ID: {sheet_id}\nNow, please update your configuration using /update_config.",
+        bot.send_message(message.chat.id,
+                         f"✅ Google Sheet linked successfully! Sheet ID: {sheet_id}\nNow, please update your configuration using /update_config.",
                          reply_markup=command_markup)
     except IndexError:
         bot.send_message(message.chat.id, "⚠️ Please provide a Sheet ID. Example:\n`/set_sheet <your_sheet_id>`",
@@ -782,7 +793,8 @@ def send_reminders():
         now = datetime.datetime.utcnow().replace(tzinfo=pytz.utc).astimezone(user_tz)
         if now.strftime('%H:%M') == REMINDER_TIME:
             try:
-                bot.send_message(user_id, "Don't forget to track your habits today! Type /habits to begin.", reply_markup=command_markup)
+                bot.send_message(user_id, "Don't forget to track your habits today! Type /habits to begin.",
+                                 reply_markup=command_markup)
                 logging.info(f"Reminder sent to user {user_id} at local time {now.strftime('%H:%M')} ({tz_str}).")
             except Exception as e:
                 logging.error(f"Failed to send reminder to {user_id}: {e}")
@@ -797,17 +809,154 @@ def schedule_checker():
 def ensure_setup(message):
     user_id = message.from_user.id
     if user_id not in user_setup_complete:
-        bot.send_message(message.chat.id, "Please complete initial setup first:\nUse /set_sheet and /update_config.", reply_markup=command_markup)
+        bot.send_message(message.chat.id, "Please complete initial setup first:\nUse /set_sheet and /update_config.",
+                         reply_markup=command_markup)
         return False
     return True
+
+
+# Add the /dream command handler
+@bot.message_handler(commands=['dream'])
+def dream_command(message):
+    if not ensure_setup(message):
+        return
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} initiated /dream command.")
+    user_states[user_id] = DREAM_INPUT
+    active_users.add(user_id)
+
+    bot.send_message(message.chat.id,
+                     "Please describe your dream, either by text or voice message.",
+                     reply_markup=command_markup)
+
+
+# Handler for dream input (text or voice)
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == DREAM_INPUT,
+                     content_types=['text', 'voice'])
+def handle_dream_input(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} is providing dream input.")
+
+    if message.text and message.text.lower() == 'cancel':
+        cancel_process(message)
+        return
+
+    if message.voice:
+        dream_text = transcribe_voice_message(message)
+        if dream_text is None:
+            bot.reply_to(message, "Sorry, I couldn't process your voice message. Please try again.")
+            return
+    else:
+        dream_text = message.text
+
+    # Store the dream text in user_data
+    if user_id not in user_data:
+        user_data[user_id] = {}
+    user_data[user_id]['dream_text'] = dream_text
+
+    # Ask for confirmation
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('Yes', 'No')
+    markup.add('Cancel')
+    markup.add('/habits', '/dream', '/help')
+
+    bot.send_message(
+        message.chat.id,
+        f"Here is your dream description:\n\n\"{dream_text}\"\n\nDo you want to save it?",
+        reply_markup=markup
+    )
+    user_states[user_id] = DREAM_CONFIRMING
+
+
+# Handler for dream confirmation
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == DREAM_CONFIRMING)
+def confirm_dream(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} is confirming dream input.")
+    user_response = message.text.lower()
+
+    if user_response == 'cancel':
+        cancel_process(message)
+        return
+    elif user_response == 'yes':
+        # Save dream to Google Sheet
+        if user_id in user_sheets:
+            try:
+                sheet_id = user_sheets[user_id]
+                try:
+                    sheet = gc.open_by_key(sheet_id).worksheet("Dreams")
+                except Exception:
+                    # Create Dreams sheet if it doesn't exist
+                    spreadsheet = gc.open_by_key(sheet_id)
+                    sheet = spreadsheet.add_worksheet(title="Dreams", rows=100, cols=3)
+                    sheet.update(values=[["datetime", "date", "dream"]], range_name="A1")
+
+                current_datetime = datetime.datetime.now()
+                date_val = current_datetime.strftime('%Y-%m-%d')
+                datetime_val = current_datetime.strftime('%Y-%m-%d %H:%M:%S')
+
+                sheet.append_row([datetime_val, date_val, user_data[user_id]['dream_text']], value_input_option='USER_ENTERED')
+                bot.send_message(message.chat.id, "Your dream has been saved successfully!",
+                                 reply_markup=command_markup)
+                logging.info(f"Dream saved for user {user_id}.")
+            except Exception as e:
+                logging.error(f"Error saving dream for user {user_id}: {e}")
+                bot.send_message(message.chat.id,
+                                 "Failed to save your dream. Please check if your Google Sheet is properly linked.",
+                                 reply_markup=command_markup)
+        else:
+            bot.send_message(message.chat.id,
+                             "You need to link a Google Sheet first. Use /set_sheet command.",
+                             reply_markup=command_markup)
+
+        # Clear user state and data
+        user_states[user_id] = None
+        user_data[user_id] = {}
+    elif user_response == 'no':
+        bot.reply_to(message, "Please provide the corrected dream description, either by text or voice message.")
+        user_states[user_id] = DREAM_EDITING
+    else:
+        bot.reply_to(message, "Please reply with 'Yes' or 'No'.")
+        logging.info(f"User {user_id} provided invalid response: {message.text}")
+
+
+# Handler for dream editing
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == DREAM_EDITING,
+                     content_types=['text', 'voice'])
+def edit_dream(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} is editing dream input.")
+
+    if message.text and message.text.lower() == 'cancel':
+        cancel_process(message)
+        return
+
+    if message.voice:
+        corrected_dream = transcribe_voice_message(message)
+        if corrected_dream is None:
+            bot.reply_to(message, "Sorry, I couldn't process your voice message. Please try again.")
+            return
+    else:
+        corrected_dream = message.text
+
+    # Store the corrected dream
+    user_data[user_id]['dream_text'] = corrected_dream
+
+    # Ask for confirmation again
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('Yes', 'No')
+    markup.add('Cancel')
+    markup.add('/habits', '/dream', '/help')
+
+    bot.send_message(
+        message.chat.id,
+        f"Updated dream description:\n\n\"{corrected_dream}\"\n\nIs this correct now?",
+        reply_markup=markup
+    )
+    user_states[user_id] = DREAM_CONFIRMING
 
 
 if __name__ == '__main__':
     threading.Thread(target=schedule_checker).start()
     logging.info("Starting the bot.")
-    while True:
-        try:
-            bot.polling(none_stop=True, timeout=60)
-        except Exception as e:
-            logging.error(f"Bot polling error: {e}")
-            time.sleep(15)
+    bot.polling(none_stop=True)

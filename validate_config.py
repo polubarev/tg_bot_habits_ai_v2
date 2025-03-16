@@ -8,7 +8,7 @@ config_schema = {
     "type": "object",
     "properties": {
         "habits": {"type": "object"},
-        "reminder_time": {"type": "string", "pattern": "^(?:[01]\d|2[0-3]):[0-5]\d$"},
+        "reminder_time": {"type": "string", "pattern": r"^(?:[01]\d|2[0-3]):[0-5]\d$"},
     },
     "required": ["habits", "reminder_time"]
 }
@@ -39,9 +39,11 @@ def validate_habits(habits):
         if isinstance(habit_type, list):
             for t in habit_type:
                 if t not in VALID_TYPES:
-                    errors.append(f"Error in habit '{habit_name}': Invalid type '{t}'. Allowed types are {VALID_TYPES}.")
+                    errors.append(
+                        f"Error in habit '{habit_name}': Invalid type '{t}'. Allowed types are {VALID_TYPES}.")
         elif habit_type not in VALID_TYPES:
-            errors.append(f"Error in habit '{habit_name}': Invalid type '{habit_type}'. Allowed types are {VALID_TYPES}.")
+            errors.append(
+                f"Error in habit '{habit_name}': Invalid type '{habit_type}'. Allowed types are {VALID_TYPES}.")
 
         # Validate 'description'
         if 'description' not in habit_info or not isinstance(habit_info['description'], str):
@@ -61,7 +63,8 @@ def validate_habits(habits):
         for key in habit_info:
             if key not in ['type', 'description']:
                 if key not in allowed_fields:
-                    errors.append(f"Error in habit '{habit_name}': Field '{key}' is not allowed for type(s) {types_list}.")
+                    errors.append(
+                        f"Error in habit '{habit_name}': Field '{key}' is not allowed for type(s) {types_list}.")
                     continue
 
                 # Validate field types
@@ -93,4 +96,3 @@ def validate_habits(habits):
             logging.error(error)
         return False, errors
     return True, []
-

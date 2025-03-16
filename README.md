@@ -10,7 +10,7 @@ A Telegram bot for tracking habits with Google Sheets integration and OpenAI-ass
   - `OPENAI_API_KEY`
   - `SERVICE_ACCOUNT_FILE` (if different from the default)
 - Link your Google Sheet using the `/set_sheet <your_sheet_id>` command.
-- Update your bot’s configuration by sending the updated JSON with `/update_config`.
+- Update your bot's configuration by sending the updated JSON with `/update_config`.
 
 ## Running Locally
 1. Install dependencies:  
@@ -28,6 +28,7 @@ A Telegram bot for tracking habits with Google Sheets integration and OpenAI-ass
 - `/start`: Begin interaction with the bot.
 - `/habits`: Record your day's habits.
 - `/manual`: Manually input habit data in JSON format.
+- `/dream`: Record and save your dreams.
 - `/help`: Display help information.
 - `/set_sheet`: Link your Google Sheet.
 - `/update_config`: Update your bot configuration.
@@ -43,6 +44,8 @@ The Habit Tracker Bot is a Telegram bot that helps you track your daily habits b
 - **Grammar Correction**: Ensures that your diary entries are grammatically correct.
 - **Interactive Interface**: Uses buttons and keyboards for easy interaction.
 - **Daily Reminders**: Sends you reminders to track your habits.
+- **Dream Tracking**: Record and save your dreams to a dedicated worksheet in your Google Sheet.
+- **Timezone Support**: Sends reminders based on your local timezone.
 
 ## Installation
 
@@ -128,6 +131,7 @@ The `config.json` file contains all the necessary configurations for the bot. Be
     }
   },
   "reminder_time": "17:15",
+  "timezone": "Europe/London",
   "data_directory": "data/habits/"
 }
 ```
@@ -143,6 +147,7 @@ The `config.json` file contains all the necessary configurations for the bot. Be
     - **minimum** (optional): Minimum value for numerical types.
     - **maximum** (optional): Maximum value for numerical types.
 - **reminder\_time**: The time when the bot sends you a reminder to track your habits (in `HH:MM` 24-hour format).
+- **timezone**: Your local timezone (e.g., "Europe/London", "America/New_York").
 - **data\_directory**: The directory where your habit data will be saved.
 
 ### Filling Out `config.json`
@@ -204,6 +209,24 @@ The `config.json` file contains all the necessary configurations for the bot. Be
      "data_directory": "data/habits/"
      ```
 
+## Google Sheets Integration
+
+The bot automatically creates several worksheets in your linked Google Sheet:
+
+1. **Diary Raw**: Contains all your habit entries, including multiple entries for the same day.
+2. **Diary**: Contains aggregated habit data, keeping only the latest entry for each day.
+3. **Dreams**: Contains all your recorded dreams with timestamps.
+
+## Dream Tracking
+
+To record and save your dreams:
+
+1. Use the `/dream` command to start dream recording.
+2. Enter your dream description via text or voice message.
+3. Review the dream description and confirm to save it.
+4. If needed, you can edit the dream description before saving.
+5. Your dreams are saved to the "Dreams" worksheet in your linked Google Sheet.
+
 ## Validation Script (`validate_config.py`)
 
 Before running the bot, it's crucial to ensure that your `config.yaml` file is correctly set up. The `validate_config.py` script checks the configuration file for:
@@ -241,6 +264,8 @@ python bot.py
 - [ ] move to container
 - [ ] create more user-friendly instructions 
 - [ ] create user friendly config file
+- [ ] save to google sheets with correct type
+- [x] add dreams handler
  
 ## Contributing
 
