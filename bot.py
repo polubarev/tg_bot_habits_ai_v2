@@ -641,7 +641,7 @@ def aggregate_diary(user_id):
             day = row[idx_date]
             dt_str = row[idx_datetime]
             try:
-                dt = datetime.datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
+                dt = datetime.datetime.strptime(dt_str, '%d-%m-%Y %H:%M:%S')
             except Exception:
                 continue
             # Keep record if day not seen or dt is later than stored record.

@@ -5,3 +5,4 @@
 /.env
 /.dockerignore
 /docker_snippets
+my_config.json
