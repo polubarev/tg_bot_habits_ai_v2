@@ -57,6 +57,9 @@ UPDATING_CONFIG = 'UPDATING_CONFIG'
 DREAM_INPUT = 'DREAM_INPUT'  # New state for dream input
 DREAM_CONFIRMING = 'DREAM_CONFIRMING'  # New state for dream confirmation
 DREAM_EDITING = 'DREAM_EDITING'  # New state for dream editing
+THOUGHTS_INPUT = 'THOUGHTS_INPUT'  # New state for thoughts input
+THOUGHTS_CONFIRMING = 'THOUGHTS_CONFIRMING'  # New state for thoughts confirmation
+THOUGHTS_EDITING = 'THOUGHTS_EDITING'  # New state for thoughts editing
 
 user_states = {}
 user_data = {}
@@ -64,7 +67,7 @@ active_users = set()
 
 # Create a global keyboard with command buttons
 command_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-command_markup.add('/habits', '/manual', '/dream')  # Added /dream command
+command_markup.add('/habits', '/manual', '/dream', '/thoughts')  # Added /dream and /thoughts commands
 command_markup.add('/help', '/cancel')
 command_markup.add('/update_config', '/set_sheet')  # Added /set_sheet command
 
@@ -194,6 +197,7 @@ def help_command(message):
         "- /habits: Begin tracking your habits by describing your day.\n"
         "- /manual: Manually input your habits in JSON format.\n"
         "- /dream: Record your dreams and save them to a separate sheet.\n"  # Added dream command
+        "- /thoughts: Record your thoughts and save them to a separate sheet.\n"  # Added thoughts command
         "- /cancel: Cancel the current habit tracking process.\n"
         "- /help: Show this help message.\n"
         "- /update_config: Update the bot configuration.\n"
@@ -732,7 +736,13 @@ def create_diary_sheets(user_id):
         except Exception:
             dreams_sheet = spreadsheet.add_worksheet(title="Dreams", rows=100, cols=3)
             dreams_sheet.update(values=[["datetime", "date", "dream"]], range_name="A1")
-        logging.info(f"Diary and Dreams worksheets created/verified for user {user_id}.")
+        # Create "Thoughts" if it doesn't exist.
+        try:
+            spreadsheet.worksheet("Thoughts")
+        except Exception:
+            thoughts_sheet = spreadsheet.add_worksheet(title="Thoughts", rows=100, cols=3)
+            thoughts_sheet.update(values=[["datetime", "date", "thought"]], range_name="A1")
+        logging.info(f"Diary, Dreams and Thoughts worksheets created/verified for user {user_id}.")
     except Exception as e:
         logging.error(f"Error creating diary worksheets for user {user_id}: {e}")
 
@@ -954,6 +964,120 @@ def edit_dream(message):
     )
     user_states[user_id] = DREAM_CONFIRMING
 
+
+# Add the /thoughts command handler
+@bot.message_handler(commands=['thoughts'])
+def thoughts_command(message):
+    if not ensure_setup(message):
+        return
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} initiated /thoughts command.")
+    user_states[user_id] = THOUGHTS_INPUT
+    active_users.add(user_id)
+    bot.send_message(message.chat.id,
+                     "Please share your thoughts, either by text or voice message.",
+                     reply_markup=command_markup)
+
+# Handler for thoughts input (text or voice)
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == THOUGHTS_INPUT,
+                     content_types=['text', 'voice'])
+def handle_thoughts_input(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} is providing thoughts input.")
+    if message.text and message.text.lower() == 'cancel':
+        cancel_process(message)
+        return
+    if message.voice:
+        thought_text = transcribe_voice_message(message)
+        if thought_text is None:
+            bot.reply_to(message, "Sorry, I couldn't process your voice message. Please try again.")
+            return
+    else:
+        thought_text = message.text
+    user_data.setdefault(user_id, {})['thought_text'] = thought_text
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('Yes', 'No')
+    markup.add('Cancel')
+    markup.add('/habits', '/thoughts', '/help')
+    bot.send_message(
+        message.chat.id,
+        f"Here are your thoughts:\n\n\"{thought_text}\"\n\nDo you want to save it?",
+        reply_markup=markup
+    )
+    user_states[user_id] = THOUGHTS_CONFIRMING
+
+# Handler for thoughts confirmation
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == THOUGHTS_CONFIRMING)
+def confirm_thoughts(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} is confirming thoughts input.")
+    user_response = message.text.lower()
+    if user_response == 'cancel':
+        cancel_process(message)
+        return
+    elif user_response == 'yes':
+        if user_id in user_sheets:
+            try:
+                sheet_id = user_sheets[user_id]
+                try:
+                    sheet = gc.open_by_key(sheet_id).worksheet("Thoughts")
+                except Exception:
+                    spreadsheet = gc.open_by_key(sheet_id)
+                    sheet = spreadsheet.add_worksheet(title="Thoughts", rows=100, cols=3)
+                    sheet.update(values=[["datetime", "date", "thought"]], range_name="A1")
+                current_datetime = datetime.datetime.now()
+                date_val = current_datetime.strftime('%Y-%m-%d')
+                datetime_val = current_datetime.strftime('%Y-%m-%d %H:%M:%S')
+                sheet.append_row([datetime_val, date_val, user_data[user_id]['thought_text']],
+                                 value_input_option='USER_ENTERED')
+                bot.send_message(message.chat.id, "Your thoughts have been saved successfully!",
+                                 reply_markup=command_markup)
+                logging.info(f"Thoughts saved for user {user_id}.")
+            except Exception as e:
+                logging.error(f"Error saving thoughts for user {user_id}: {e}")
+                bot.send_message(message.chat.id,
+                                 "Failed to save your thoughts. Please check if your Google Sheet is properly linked.",
+                                 reply_markup=command_markup)
+        else:
+            bot.send_message(message.chat.id,
+                             "You need to link a Google Sheet first. Use /set_sheet command.",
+                             reply_markup=command_markup)
+        user_states[user_id] = None
+        user_data[user_id] = {}
+    elif user_response == 'no':
+        bot.reply_to(message, "Please provide the corrected thoughts, either by text or voice message.")
+        user_states[user_id] = THOUGHTS_EDITING
+    else:
+        bot.reply_to(message, "Please reply with 'Yes' or 'No'.")
+        logging.info(f"User {user_id} provided invalid response: {message.text}")
+
+# Handler for thoughts editing
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == THOUGHTS_EDITING,
+                     content_types=['text', 'voice'])
+def edit_thoughts(message):
+    user_id = message.from_user.id
+    logging.info(f"User {user_id} is editing thoughts input.")
+    if message.text and message.text.lower() == 'cancel':
+        cancel_process(message)
+        return
+    if message.voice:
+        corrected_thought = transcribe_voice_message(message)
+        if corrected_thought is None:
+            bot.reply_to(message, "Sorry, I couldn't process your voice message. Please try again.")
+            return
+    else:
+        corrected_thought = message.text
+    user_data[user_id]['thought_text'] = corrected_thought
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('Yes', 'No')
+    markup.add('Cancel')
+    markup.add('/habits', '/thoughts', '/help')
+    bot.send_message(
+        message.chat.id,
+        f"Updated thoughts:\n\n\"{corrected_thought}\"\n\nIs this correct now?",
+        reply_markup=markup
+    )
+    user_states[user_id] = THOUGHTS_CONFIRMING
 
 if __name__ == '__main__':
     threading.Thread(target=schedule_checker).start()
