@@ -647,10 +647,9 @@ def aggregate_diary(user_id):
             # Keep record if day not seen or dt is later than stored record.
             if day not in aggregated or dt > aggregated[day]["dt"]:
                 aggregated[day] = {"row": row, "dt": dt}
-        # Build aggregated data sorted by date.
-        agg_rows = [header]
-        for day in sorted(aggregated.keys()):
-            agg_rows.append(aggregated[day]["row"])
+        # Build aggregated data sorted by datetime:
+        sorted_entries = sorted(aggregated.values(), key=lambda x: x["dt"])
+        agg_rows = [header] + [entry["row"] for entry in sorted_entries]
         # Get or create the "Diary" worksheet.
         try:
             agg_sheet = spreadsheet.worksheet("Diary")
