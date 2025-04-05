@@ -13,11 +13,12 @@ from dotenv import load_dotenv
 from validate_config import validate_habits, config_schema
 import jsonschema
 from jsonschema import validate
-import html  # newly added import to escape HTML characters
-import pytz  # newly added import for timezone handling
+import html
+import pytz
+from openai import OpenAI
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(override=True)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,17 +31,22 @@ REMINDER_TIME = "09:00"  # Default reminder time.
 user_timezones = {}  # New global mapping for user time zones
 
 # Google Sheets Service Account configuration
-# The SERVICE_ACCOUNT_FILE can also be set in your .env file.
-SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE', 'tg-bot-sso-0ffce3c7c492.json')
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+credentials_path = "/secrets/google-credentials"
+try:
+    with open(credentials_path, "r") as cred_file:
+        credentials_json = json.load(cred_file)
+    creds = Credentials.from_service_account_info(credentials_json, scopes=SCOPES)
+    logging.info("Using credentials from Cloud Run secrets.")
+except FileNotFoundError:
+    SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE', 'google_service_account_credentials.json')
+    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    logging.info("Using credentials from local file.")
+
 gc = gspread.authorize(creds)
 
 # Global dictionary to store user-linked Google Sheet IDs.
 user_sheets = {}
-
-# Initialize OpenAI client
-from openai import OpenAI
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -904,7 +910,8 @@ def confirm_dream(message):
                 date_val = current_datetime.strftime('%Y-%m-%d')
                 datetime_val = current_datetime.strftime('%Y-%m-%d %H:%M:%S')
 
-                sheet.append_row([datetime_val, date_val, user_data[user_id]['dream_text']], value_input_option='USER_ENTERED')
+                sheet.append_row([datetime_val, date_val, user_data[user_id]['dream_text']],
+                                 value_input_option='USER_ENTERED')
                 bot.send_message(message.chat.id, "Your dream has been saved successfully!",
                                  reply_markup=command_markup)
                 logging.info(f"Dream saved for user {user_id}.")
@@ -978,6 +985,7 @@ def thoughts_command(message):
                      "Please share your thoughts, either by text or voice message.",
                      reply_markup=command_markup)
 
+
 # Handler for thoughts input (text or voice)
 @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == THOUGHTS_INPUT,
                      content_types=['text', 'voice'])
@@ -1005,6 +1013,7 @@ def handle_thoughts_input(message):
         reply_markup=markup
     )
     user_states[user_id] = THOUGHTS_CONFIRMING
+
 
 # Handler for thoughts confirmation
 @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == THOUGHTS_CONFIRMING)
@@ -1051,6 +1060,7 @@ def confirm_thoughts(message):
         bot.reply_to(message, "Please reply with 'Yes' or 'No'.")
         logging.info(f"User {user_id} provided invalid response: {message.text}")
 
+
 # Handler for thoughts editing
 @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == THOUGHTS_EDITING,
                      content_types=['text', 'voice'])
@@ -1078,6 +1088,7 @@ def edit_thoughts(message):
         reply_markup=markup
     )
     user_states[user_id] = THOUGHTS_CONFIRMING
+
 
 if __name__ == '__main__':
     threading.Thread(target=schedule_checker).start()
