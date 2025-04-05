@@ -37,13 +37,19 @@ try:
     with open(credentials_path, "r") as cred_file:
         credentials_json = json.load(cred_file)
     creds = Credentials.from_service_account_info(credentials_json, scopes=SCOPES)
-    logging.info("Using credentials from Cloud Run secrets.")
+    logging.info("Using credentials from Cloud Run secrets {creds}.")
 except FileNotFoundError:
     SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE', 'google_service_account_credentials.json')
     creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    logging.info("Using credentials from local file.")
+    logging.info("Using credentials from local file {creds}.")
 
 gc = gspread.authorize(creds)
+try:
+    # Try to list all spreadsheets as a simple check.
+    spreadsheets = gc.openall()
+    logging.info(f"gspread successfully authorized and running. Found {len(spreadsheets)} spreadsheets.")
+except Exception as e:
+    logging.error(f"gspread authorization check failed: {e}")
 
 # Global dictionary to store user-linked Google Sheet IDs.
 user_sheets = {}
