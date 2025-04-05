@@ -33,25 +33,26 @@ user_timezones = {}  # New global mapping for user time zones
 
 # Google Sheets Service Account configuration
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-credentials_path = "/secrets/google-credentials"
+credentials_path = "../secrets/google-credentials"
 
-# try:
-#     logging.info(f"Trying use google cloud secrets.")
-#     creds = Credentials.from_service_account_file(credentials_path, scopes=SCOPES)
-#     logging.info(f"Using credentials from Cloud Run secrets {credentials_path}.")
-# except FileNotFoundError:
-#     SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE', 'google-credentials.json')
-#     creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-#     logging.info(f"Using credentials from local file {SERVICE_ACCOUNT_FILE}.")
-#
-# gc = gspread.authorize(creds)
+try:
+    logging.info(f"Trying use google cloud secrets.")
+    creds = Credentials.from_service_account_file(credentials_path, scopes=SCOPES)
+    logging.info(f"Using credentials from Cloud Run secrets {credentials_path}.")
+except FileNotFoundError:
+    logging.info(f"Trying use local secrets.")
+    SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE', 'google-credentials.json')
+    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    logging.info(f"Using credentials from local file {SERVICE_ACCOUNT_FILE}.")
 
-# try:
-#     # Try to list all spreadsheets as a simple check.
-#     spreadsheets = gc.openall()
-#     logging.info(f"gspread successfully authorized and running. Found {len(spreadsheets)} spreadsheets.")
-# except Exception as e:
-#     logging.error(f"gspread authorization check failed: {e}")
+gc = gspread.authorize(creds)
+
+try:
+    # Try to list all spreadsheets as a simple check.
+    spreadsheets = gc.openall()
+    logging.info(f"gspread successfully authorized and running. Found {len(spreadsheets)} spreadsheets.")
+except Exception as e:
+    logging.error(f"gspread authorization check failed: {e}")
 
 # Global dictionary to store user-linked Google Sheet IDs.
 user_sheets = {}
