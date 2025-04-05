@@ -32,7 +32,7 @@ user_timezones = {}  # New global mapping for user time zones
 
 # Google Sheets Service Account configuration
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-credentials_path = "/app/secrets/google-credentials.json"
+credentials_path = "/secrets/google-credentials.json"
 
 try:
     with open(credentials_path, "r") as cred_file:
