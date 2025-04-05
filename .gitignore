@@ -6,5 +6,5 @@
 /.dockerignore
 /docker_snippets
 my_config.json
-/google_service_account_credentials.json
+/google-credentials.json
 /docker-compose.yml

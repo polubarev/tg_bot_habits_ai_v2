@@ -32,18 +32,24 @@ user_timezones = {}  # New global mapping for user time zones
 
 # Google Sheets Service Account configuration
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-credentials_path = "/secrets/google-credentials"
+credentials_path = "/app/secrets/google-credentials.json"
+
 try:
     with open(credentials_path, "r") as cred_file:
         credentials_json = json.load(cred_file)
-    creds = Credentials.from_service_account_info(credentials_json, scopes=SCOPES)
-    logging.info("Using credentials from Cloud Run secrets {creds}.")
+    creds = Credentials.from_service_account_file(credentials_path, scopes=SCOPES)
+    logging.info(f"Using credentials from Cloud Run secrets {credentials_json}.")
 except FileNotFoundError:
-    SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE', 'google_service_account_credentials.json')
+    SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE', 'google-credentials.json')
+
+    with open(SERVICE_ACCOUNT_FILE, "r") as cred_file:
+        credentials_json = json.load(cred_file)
+
     creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    logging.info("Using credentials from local file {creds}.")
+    logging.info(f"Using credentials from local file {SERVICE_ACCOUNT_FILE}.")
 
 gc = gspread.authorize(creds)
+
 try:
     # Try to list all spreadsheets as a simple check.
     spreadsheets = gc.openall()

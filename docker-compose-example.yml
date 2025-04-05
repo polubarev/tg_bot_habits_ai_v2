@@ -5,6 +5,6 @@ services:
     environment:
       - TELEGRAM_TOKEN=TELEGRAM_TOKEN
       - OPENAI_API_KEY=OPENAI_API_KEY
-      - GOOGLE_CREDENTIALS=google_service_account_credentials.json
+      - GOOGLE_CREDENTIALS=google-credentials.json
     volumes:
-      - /path/to/local/google_service_account_credentials.json:google_service_account_credentials.json
+      - /path/to/local/google-credentials.json:google-credentials.json
