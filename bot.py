@@ -16,6 +16,7 @@ from jsonschema import validate
 import html
 import pytz
 from openai import OpenAI
+from flask import Flask  # Added Flask import
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -86,6 +87,13 @@ command_markup.add('/update_config', '/set_sheet')  # Added /set_sheet command
 
 # Add global variable for setup completion tracking
 user_setup_complete = set()
+
+app = Flask(__name__)  # Initialize Flask app
+
+
+@app.route("/")
+def health_check():
+    return "Bot is running", 200
 
 
 # --- Google Sheets helper functions ---
@@ -1097,7 +1105,18 @@ def edit_thoughts(message):
     user_states[user_id] = THOUGHTS_CONFIRMING
 
 
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+
 if __name__ == '__main__':
+    # Start the Flask app in a separate thread
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    # Start the schedule checker thread, then start bot polling
     threading.Thread(target=schedule_checker).start()
     logging.info("Starting the bot.")
     bot.polling(none_stop=True)
