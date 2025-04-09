@@ -1112,12 +1112,31 @@ def run_flask():
 
 
 if __name__ == '__main__':
-    # Start the Flask app in a separate thread
+    # Start the Flask app on a background thread
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
+    logging.info("Flask server started.")
 
-    # Start the schedule checker thread, then start bot polling
-    threading.Thread(target=schedule_checker).start()
-    logging.info("Starting the bot.")
-    bot.polling(none_stop=True)
+    # Start the schedule checker thread (daemon thread will exit with the main process)
+    schedule_thread = threading.Thread(target=schedule_checker)
+    schedule_thread.daemon = True
+    schedule_thread.start()
+    logging.info("Schedule checker started.")
+
+    # Start the Telegram bot using infinity_polling.
+    # This method continuously polls for new updates and handles reconnections.
+    logging.info("Starting the Telegram bot using infinity_polling.")
+    try:
+        bot.infinity_polling(
+            timeout=20,
+            skip_pending=False,
+            long_polling_timeout=20,
+            logger_level=logging.ERROR,
+            allowed_updates=None,
+            restart_on_change=False,
+            path_to_watch=None
+        )
+    except Exception as e:
+        logging.exception("An unexpected error occurred during bot polling: %s", e)
+

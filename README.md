@@ -261,11 +261,12 @@ python bot.py
 
 ## TODO
 
-- [ ] move to container
-- [ ] create more user-friendly instructions 
+- [x] move to container
+- [x] create more user-friendly instructions 
 - [ ] create user friendly config file
-- [ ] save to google sheets with correct type
+- [x] save to google sheets with correct type
 - [x] add dreams handler
+- [ ] store for existing users their preferences for sheet and config
  
 ## Contributing
 
