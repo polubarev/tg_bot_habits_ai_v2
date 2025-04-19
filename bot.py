@@ -16,7 +16,7 @@ from jsonschema import validate
 import html
 import pytz
 from openai import OpenAI
-from flask import Flask  # Added Flask import
+from flask import Flask, request, abort
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -813,29 +813,26 @@ def transcribe_voice_message(message):
 
 
 def send_reminders():
-    logging.info("Checking and sending reminders to active users based on their time zones.")
-    for user_id in active_users:
-        # Get the user's time zone; default to UTC if not set.
-        tz_str = user_timezones.get(user_id, "UTC")
+    logging.info("Running reminders check…")
+    for uid in list(user_setup_complete):
+        tz = user_timezones.get(uid, 'UTC')
         try:
-            user_tz = pytz.timezone(tz_str)
-        except Exception as e:
-            logging.error(f"Invalid timezone for user {user_id}: {tz_str}. Using UTC instead. Error: {e}")
-            user_tz = pytz.utc
-        now = datetime.datetime.utcnow().replace(tzinfo=pytz.utc).astimezone(user_tz)
+            now = datetime.datetime.now(pytz.timezone(tz))
+        except:
+            now = datetime.datetime.utcnow()
         if now.strftime('%H:%M') == REMINDER_TIME:
-            try:
-                bot.send_message(user_id, "Don't forget to track your habits today! Type /habits to begin.",
-                                 reply_markup=command_markup)
-                logging.info(f"Reminder sent to user {user_id} at local time {now.strftime('%H:%M')} ({tz_str}).")
-            except Exception as e:
-                logging.error(f"Failed to send reminder to {user_id}: {e}")
+            bot.send_message(uid,
+                "⏰ Reminder: don't forget to track today’s habits! Use /habits",
+                reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True)
+                              .add('/habits', '/help', '/cancel')
+                             )
 
 
 def schedule_checker():
+    schedule.every().day.at(REMINDER_TIME).do(send_reminders)
     while True:
         schedule.run_pending()
-        time.sleep(1)
+        time.sleep(30)
 
 
 def ensure_setup(message):
@@ -1110,6 +1107,18 @@ def edit_thoughts(message):
 # def run_flask():
 #     port = int(os.environ.get("PORT", 8080))
 #     app.run(host="0.0.0.0", port=port)
+
+@app.route(f"/{TELEGRAM_TOKEN}", methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') != 'application/json':
+        abort(403)
+    update = telebot.types.Update.de_json(request.get_data(), bot)
+    bot.process_new_updates([update])
+    return '', 200
+
+@app.route("/")
+def health_check():
+    return "OK", 200
 
 
 if __name__ == '__main__':
