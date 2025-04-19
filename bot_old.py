@@ -27,7 +27,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Use environment variables and default values since local config.json is no longer needed.
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 FULL_CONFIG = {}  # Full config including "habits" and "reminder_time".
 REMINDER_TIME = "09:00"  # Default reminder time.
 user_timezones = {}  # New global mapping for user time zones
@@ -1107,19 +1106,37 @@ def edit_thoughts(message):
     user_states[user_id] = THOUGHTS_CONFIRMING
 
 
-# def run_flask():
-#     port = int(os.environ.get("PORT", 8080))
-#     app.run(host="0.0.0.0", port=port)
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
 
 if __name__ == '__main__':
-    # 1. set webhook
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+    # Start the Flask app on a background thread
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    logging.info("Flask server started.")
 
-    # 2. start scheduler thread
-    threading.Thread(target=schedule_checker, daemon=True).start()
+    # Start the schedule checker thread (daemon thread will exit with the main process)
+    schedule_thread = threading.Thread(target=schedule_checker)
+    schedule_thread.daemon = True
+    schedule_thread.start()
+    logging.info("Schedule checker started.")
 
-    # 3. run Flask
-    app.run(host="0.0.0.0", port=8080)
+    # Start the Telegram bot using infinity_polling.
+    # This method continuously polls for new updates and handles reconnections.
+    logging.info("Starting the Telegram bot using infinity_polling.")
+    try:
+        bot.infinity_polling(
+            timeout=20,
+            skip_pending=False,
+            long_polling_timeout=20,
+            logger_level=logging.ERROR,
+            allowed_updates=None,
+            restart_on_change=False,
+            path_to_watch=None
+        )
+    except Exception as e:
+        logging.exception("An unexpected error occurred during bot polling: %s", e)
 

@@ -1,5 +1,4 @@
 /.idea
-/test.py
 /bot.log
 /server_snippet.txt
 /.env
@@ -8,3 +7,4 @@
 my_config.json
 /google-credentials.json
 /docker-compose.yml
+/research/

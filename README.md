@@ -98,7 +98,7 @@ The Habit Tracker Bot is a Telegram bot that helps you track your daily habits b
 6. **Run the Bot**
 
    ```bash
-   python bot.py
+   python bot_old.py
    ```
 
 ## Configuration Guide (`config.json`)
@@ -248,7 +248,7 @@ If the script finds any issues, it will display error messages indicating what n
 After validating your configuration:
 
 ```bash
-python bot.py
+python bot_old.py
 ```
 
 ---
