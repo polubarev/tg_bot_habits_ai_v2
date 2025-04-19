@@ -13,3 +13,4 @@ APScheduler
 pytz
 schedule
 flask
+google-cloud-storage

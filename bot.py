@@ -12,11 +12,14 @@ from telebot import types
 from dotenv import load_dotenv
 from validate_config import validate_habits, config_schema
 import jsonschema
-from jsonschema import validate
+# from jsonschema import validate
 import html
 import pytz
 from openai import OpenAI
 from flask import Flask, request, abort
+from google.cloud import storage
+import json
+from jsonschema import validate as js_validate
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -28,35 +31,50 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-FULL_CONFIG = {}  # Full config including "habits" and "reminder_time".
 REMINDER_TIME = "09:00"  # Default reminder time.
-user_timezones = {}  # New global mapping for user time zones
 
 # Google Sheets Service Account configuration
+# Google Sheets + GCS scopes
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-credentials_path = "../secrets/google-credentials"
+STORAGE_SCOPES = ["https://www.googleapis.com/auth/devstorage.read_write"]
+all_scopes = SCOPES + STORAGE_SCOPES
 
+# Load your service‑account JSON once
+credentials_path = "../secrets/google-credentials"
 try:
-    logging.info(f"Trying use google cloud secrets.")
+    logging.info("Trying use Google Cloud Run secret for Sheets/Storage creds.")
     creds = Credentials.from_service_account_file(credentials_path, scopes=SCOPES)
     logging.info(f"Using credentials from Cloud Run secrets {credentials_path}.")
 except FileNotFoundError:
-    logging.info(f"Trying use local secrets.")
-    SERVICE_ACCOUNT_FILE = os.getenv('SERVICE_ACCOUNT_FILE', 'google-credentials.json')
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    logging.info(f"Using credentials from local file {SERVICE_ACCOUNT_FILE}.")
+    logging.info("Cloud Run secret not found; falling back to local JSON.")
+    svc_file = os.getenv('SERVICE_ACCOUNT_FILE', 'google-credentials.json')
+    creds = Credentials.from_service_account_file(svc_file, scopes=SCOPES)
+    logging.info(f"Using credentials from local file {svc_file}.")
 
+# Expand those credentials to include the Storage scope
+if hasattr(creds, "with_scopes"):
+    gcs_creds = creds.with_scopes(all_scopes)
+else:
+    # Fallback in case your Credentials class doesn’t support with_scopes
+    gcs_creds = Credentials.from_service_account_file(
+        credentials_path,
+        scopes=all_scopes
+    )
+
+# Authorize gspread with the original Sheets‑only creds
 gc = gspread.authorize(creds)
+# (… your gspread check here …)
 
-try:
-    # Try to list all spreadsheets as a simple check.
-    spreadsheets = gc.openall()
-    logging.info(f"gspread successfully authorized and running. Found {len(spreadsheets)} spreadsheets.")
-except Exception as e:
-    logging.error(f"gspread authorization check failed: {e}")
+# ——— GCS client for persisting user settings ————————————————
+SETTINGS_BUCKET = os.getenv('SETTINGS_BUCKET')
+if not SETTINGS_BUCKET:
+    raise RuntimeError("SETTINGS_BUCKET environment variable is required")
 
-# Global dictionary to store user-linked Google Sheet IDs.
-user_sheets = {}
+_storage_client = storage.Client(
+    credentials=gcs_creds,  # <-- use gcs_creds, not creds
+    project=gcs_creds.project_id
+)
+_settings_bucket = _storage_client.bucket(SETTINGS_BUCKET)
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -77,9 +95,13 @@ THOUGHTS_INPUT = 'THOUGHTS_INPUT'  # New state for thoughts input
 THOUGHTS_CONFIRMING = 'THOUGHTS_CONFIRMING'  # New state for thoughts confirmation
 THOUGHTS_EDITING = 'THOUGHTS_EDITING'  # New state for thoughts editing
 
+FULL_CONFIGs = {}  # per-user configs
+user_timezones = {}  # per-user timezones
 user_states = {}
 user_data = {}
+user_sheets = {}
 active_users = set()
+USER_HABIT_PROPS: dict[int, tuple[dict, list]] = {}
 
 # Create a global keyboard with command buttons
 command_markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -91,6 +113,32 @@ command_markup.add('/update_config', '/set_sheet')  # Added /set_sheet command
 user_setup_complete = set()
 
 app = Flask(__name__)  # Initialize Flask app
+
+
+def save_user_settings(user_id: int):
+    """Persist this user’s sheet + config + timezone to GCS."""
+    data = {
+        'sheet_id': user_sheets.get(user_id),
+        'config': FULL_CONFIGs.get(user_id, {}),
+        'timezone': user_timezones.get(user_id, 'UTC'),
+    }
+    blob = _settings_bucket.blob(f'settings/{user_id}.json')
+    blob.upload_from_string(json.dumps(data), content_type='application/json')
+    logging.info(f"Saved settings for user {user_id} to GCS")
+
+
+def load_all_user_settings():
+    """Load every user’s JSON from GCS into in‑memory dicts."""
+    prefix = 'settings/'
+    for blob in _settings_bucket.list_blobs(prefix=prefix):
+        # blob.name == 'settings/12345.json'
+        user_id = int(blob.name[len(prefix):-5])  # strip prefix + ".json"
+        data = json.loads(blob.download_as_text())
+        user_sheets[user_id] = data.get('sheet_id')
+        FULL_CONFIGs[user_id] = data.get('config', {})
+        user_timezones[user_id] = data.get('timezone', 'UTC')
+        user_setup_complete.add(user_id)
+        logging.info(f"Loaded settings for user {user_id} from GCS")
 
 
 @app.route("/")
@@ -186,7 +234,7 @@ def parse_habit_properties(habits_config):
 
 
 # Parse habit properties and required habits
-habit_properties, required_habits = parse_habit_properties(FULL_CONFIG.get("habits", {}))
+# habit_properties, required_habits = parse_habit_properties(FULL_CONFIGs[user_id].get("habits", {}))
 
 
 @bot.message_handler(commands=['start'])
@@ -313,8 +361,11 @@ def handle_custom_date(message):
 
 def prompt_user_for_input(message):
     user_id = message.from_user.id
+
+    habit_properties, _ = USER_HABIT_PROPS.get(user_id, ({}, []))
+
     habits_list = ""
-    for habit_name, habit_info in FULL_CONFIG.get("habits", {}).items():
+    for habit_name, habit_info in FULL_CONFIGs[user_id].get("habits", {}).items():
         habits_list += f"- *{habit_name}*: {habit_info['description']}\n"
     date_str = user_data[user_id]['date']
     reminder_message = (
@@ -344,6 +395,7 @@ def handle_input(message):
         user_input = message.text
 
     user_data[user_id]['user_input'] = user_input
+    habit_properties, required_habits = USER_HABIT_PROPS.get(user_id, ({}, []))
 
     function_parameters = {
         "type": "object",
@@ -471,6 +523,8 @@ def edit(message):
     else:
         correction = message.text
 
+    habit_properties, required_habits = USER_HABIT_PROPS.get(user_id, ({}, []))
+
     function_parameters = {
         "type": "object",
         "properties": habit_properties,
@@ -569,36 +623,48 @@ def manual_input(message):
 @bot.message_handler(commands=['update_config'])
 def update_config_command(message):
     user_id = message.from_user.id
-    # Ensure sheet is linked first.
+
+    # 1️⃣ Ensure they’ve linked a sheet
     if user_id not in user_sheets:
-        bot.send_message(message.chat.id, "Please link your Google Sheet first using /set_sheet.",
-                         reply_markup=command_markup)
-        return
-    logging.info(f"User {user_id} initiated /update_config command.")
+        return bot.send_message(
+            message.chat.id,
+            "Please link your Google Sheet first using /set_sheet.",
+            reply_markup=command_markup
+        )
+
+    logging.info(f"User {user_id} initiated /update_config")
+
+    # 2️⃣ Mark state so next message is handled by handle_updated_config
     user_states[user_id] = UPDATING_CONFIG
     active_users.add(user_id)
 
-    if not FULL_CONFIG:
+    # 3️⃣ Fetch their existing config, if any
+    user_cfg = FULL_CONFIGs.get(user_id)
+    if not user_cfg:
+        # No saved config → show example
         try:
             with open("config_example.json", "r", encoding="utf-8") as f:
-                example_config = json.load(f)
-            config_text = json.dumps(example_config, ensure_ascii=False, indent=4)
+                example_cfg = json.load(f)
         except Exception as e:
-            logging.error(f"Error reading config_example.json: {e}")
-            config_text = "{}"
-        safe_text = html.escape(config_text)
+            logging.error(f"Failed to read config_example.json: {e}")
+            example_cfg = {}
+        display = html.escape(json.dumps(example_cfg, ensure_ascii=False, indent=4))
         bot.send_message(
             message.chat.id,
-            f"FULL_CONFIG is empty. Here's an example configuration:\n<pre>{safe_text}</pre>",
+            "No configuration found. Here’s an example to get you started:\n"
+            f"<pre>{display}</pre>\n\n"
+            "Please send me your updated configuration in JSON format.",
             parse_mode='HTML',
             reply_markup=command_markup
         )
     else:
-        config_text = json.dumps(FULL_CONFIG, ensure_ascii=False, indent=4)
-        safe_text = html.escape(config_text)
+        # Show their current configuration
+        display = html.escape(json.dumps(user_cfg, ensure_ascii=False, indent=4))
         bot.send_message(
             message.chat.id,
-            f"Current configuration:\n<pre>{safe_text}</pre>\nPlease send the updated configuration in JSON format.",
+            "Here is your current configuration:\n"
+            f"<pre>{display}</pre>\n\n"
+            "Send me the updated configuration in JSON format.",
             parse_mode='HTML',
             reply_markup=command_markup
         )
@@ -689,50 +755,116 @@ def aggregate_diary(user_id):
         logging.error(f"Error aggregating diary for user {user_id}: {e}")
 
 
-@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == UPDATING_CONFIG)
+# @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == UPDATING_CONFIG)
+# def handle_updated_config(message):
+#     user_id = message.from_user.id
+#     logging.info(f"User {user_id} is providing updated config.")
+#     if message.text and message.text.lower() == 'cancel':
+#         cancel_process(message)
+#         return
+#     try:
+#         updated_config = json.loads(message.text)
+#         try:
+#             validate(instance=updated_config, schema=config_schema)
+#         except jsonschema.exceptions.ValidationError as err:
+#             bot.reply_to(message, f"Configuration Error: {err.message}")
+#             return
+#
+#         is_valid, errors = validate_habits(updated_config['habits'])
+#         if not is_valid:
+#             error_messages = "\n".join(errors)
+#             bot.reply_to(message, f"Invalid habits configuration:\n{error_messages}")
+#             return
+#
+#         # Do NOT update local config.json; config is per user.
+#         # Update global configuration variables after config update.
+#         global FULL_CONFIG, habit_properties, required_habits, REMINDER_TIME
+#         FULL_CONFIG = updated_config
+#         REMINDER_TIME = updated_config.get("reminder_time", REMINDER_TIME)
+#         habit_properties, required_habits = parse_habit_properties(FULL_CONFIG["habits"])
+#
+#         # Store user timezone if provided.
+#         if "timezone" in updated_config:
+#             user_timezones[user_id] = updated_config["timezone"]
+#         else:
+#             # Default to UTC if not specified.
+#             user_timezones[user_id] = "UTC"
+#
+#         bot.send_message(message.chat.id, "Configuration has been updated successfully.", reply_markup=command_markup)
+#         logging.info(f"Configuration updated by user {user_id}.")
+#         user_states[user_id] = None
+#         user_setup_complete.add(user_id)
+#         # Synchronize the user's Google Sheet columns.
+#         sync_sheet_columns(user_id, updated_config)
+#     except json.JSONDecodeError as e:
+#         logging.error(f"JSON decode error for user {user_id}: {e}")
+#         bot.reply_to(message, "Invalid JSON format. Please try again.")
+
+@bot.message_handler(func=lambda msg: user_states.get(msg.from_user.id) == UPDATING_CONFIG)
 def handle_updated_config(message):
     user_id = message.from_user.id
-    logging.info(f"User {user_id} is providing updated config.")
-    if message.text and message.text.lower() == 'cancel':
-        cancel_process(message)
-        return
-    try:
-        updated_config = json.loads(message.text)
-        try:
-            validate(instance=updated_config, schema=config_schema)
-        except jsonschema.exceptions.ValidationError as err:
-            bot.reply_to(message, f"Configuration Error: {err.message}")
-            return
+    text = message.text
 
-        is_valid, errors = validate_habits(updated_config['habits'])
-        if not is_valid:
-            error_messages = "\n".join(errors)
-            bot.reply_to(message, f"Invalid habits configuration:\n{error_messages}")
-            return
-
-        # Do NOT update local config.json; config is per user.
-        # Update global configuration variables after config update.
-        global FULL_CONFIG, habit_properties, required_habits, REMINDER_TIME
-        FULL_CONFIG = updated_config
-        REMINDER_TIME = updated_config.get("reminder_time", REMINDER_TIME)
-        habit_properties, required_habits = parse_habit_properties(FULL_CONFIG["habits"])
-
-        # Store user timezone if provided.
-        if "timezone" in updated_config:
-            user_timezones[user_id] = updated_config["timezone"]
-        else:
-            # Default to UTC if not specified.
-            user_timezones[user_id] = "UTC"
-
-        bot.send_message(message.chat.id, "Configuration has been updated successfully.", reply_markup=command_markup)
-        logging.info(f"Configuration updated by user {user_id}.")
+    # Allow them to cancel
+    if text.lower() == 'cancel':
         user_states[user_id] = None
-        user_setup_complete.add(user_id)
-        # Synchronize the user's Google Sheet columns.
-        sync_sheet_columns(user_id, updated_config)
+        return bot.send_message(
+            message.chat.id,
+            "Configuration update cancelled.",
+            reply_markup=command_markup
+        )
+
+    # Parse JSON
+    try:
+        new_cfg = json.loads(text)
     except json.JSONDecodeError as e:
-        logging.error(f"JSON decode error for user {user_id}: {e}")
-        bot.reply_to(message, "Invalid JSON format. Please try again.")
+        logging.error(f"User {user_id} sent invalid JSON: {e}")
+        return bot.reply_to(
+            message,
+            "Invalid JSON format. Please fix and send it again."
+        )
+
+    # Validate schema
+    try:
+        js_validate(instance=new_cfg, schema=config_schema)
+    except Exception as e:
+        return bot.reply_to(
+            message,
+            f"Schema validation failed: {e.message}"
+        )
+
+    # Validate habits specifically
+    ok, errors = validate_habits(new_cfg.get('habits', {}))
+    if not ok:
+        return bot.reply_to(
+            message,
+            "Habits config errors:\n" + "\n".join(errors)
+        )
+
+    # ✅ Everything’s valid — update in-memory
+    FULL_CONFIGs[user_id] = new_cfg
+
+    props, reqs = parse_habit_properties(new_cfg.get("habits", {}))
+    USER_HABIT_PROPS[user_id] = (props, reqs)
+
+    user_timezones[user_id] = new_cfg.get('timezone', user_timezones.get(user_id, 'UTC'))
+
+    # Sync your sheet headers now that habits may have changed
+    sync_sheet_columns(user_id, new_cfg)
+
+    # Persist to GCS so it survives redeploy
+    save_user_settings(user_id)
+
+    # Clear state and confirm
+    user_states[user_id] = None
+    user_setup_complete.add(user_id)
+    logging.info(f"Configuration for user {user_id} updated and saved to GCS.")
+
+    bot.send_message(
+        message.chat.id,
+        "Configuration has been updated and saved successfully! 🎉",
+        reply_markup=command_markup
+    )
 
 
 # New helper function to create diary worksheets upon linking the sheet:
@@ -777,9 +909,11 @@ def set_sheet(message):
     Users send their Google Sheet ID to link it to their account.
     """
     user_id = message.from_user.id
+    logging.info(f"ENTERED set_sheet handler for user {user_id}: text={message.text!r}")
     try:
         sheet_id = message.text.split()[1]  # Extract the Sheet ID
         user_sheets[user_id] = sheet_id
+        save_user_settings(user_id)
         # Create Diary Raw and Diary worksheets upon linking.
         create_diary_sheets(user_id)
         bot.send_message(message.chat.id,
@@ -822,9 +956,9 @@ def send_reminders():
             now = datetime.datetime.utcnow()
         if now.strftime('%H:%M') == REMINDER_TIME:
             bot.send_message(uid,
-                "⏰ Reminder: don't forget to track today’s habits! Use /habits",
-                reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True)
-                              .add('/habits', '/help', '/cancel')
+                             "⏰ Reminder: don't forget to track today’s habits! Use /habits",
+                             reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True)
+                             .add('/habits', '/help', '/cancel')
                              )
 
 
@@ -1116,6 +1250,9 @@ def webhook():
 
 
 if __name__ == '__main__':
+    # Load previously saved user settings from GCS
+    load_all_user_settings()
+
     # 1. set webhook
     bot.remove_webhook()
     bot.set_webhook(url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
@@ -1125,6 +1262,3 @@ if __name__ == '__main__':
 
     # 3. run Flask
     app.run(host="0.0.0.0", port=8080)
-
-# curl -i https://tg-bot-habits-git-633637685550.me-west1.run.app/
-# curl -s https://api.telegram.org/bot7693065650:AAHP8TJnGpEhi9YrPIjI0VTumwqq4M2fNSk/getWebhookInfo | jq
