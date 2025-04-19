@@ -1110,9 +1110,7 @@ def edit_thoughts(message):
 
 @app.route(f"/{TELEGRAM_TOKEN}", methods=['POST'])
 def webhook():
-    if request.headers.get('content-type') != 'application/json':
-        abort(403)
-    update = telebot.types.Update.de_json(request.get_data(), bot)
+    update = telebot.types.Update.de_json(request.get_data().decode('utf-8'))
     bot.process_new_updates([update])
     return '', 200
 
@@ -1128,3 +1126,5 @@ if __name__ == '__main__':
     # 3. run Flask
     app.run(host="0.0.0.0", port=8080)
 
+# curl -i https://tg-bot-habits-git-633637685550.me-west1.run.app/
+# curl -s https://api.telegram.org/bot7693065650:AAHP8TJnGpEhi9YrPIjI0VTumwqq4M2fNSk/getWebhookInfo | jq
