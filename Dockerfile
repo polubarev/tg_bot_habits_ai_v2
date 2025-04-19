@@ -12,5 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the code into the container
 COPY . /app/
 
+# Expose port for webhook
+EXPOSE 8080
+
 # Command to start the bot
 CMD ["python", "bot.py"]
