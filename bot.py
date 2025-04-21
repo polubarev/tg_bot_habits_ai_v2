@@ -27,10 +27,18 @@ load_dotenv(override=True)
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+debug = False
+
 # Use environment variables and default values since local config.json is no longer needed.
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+if debug:
+    WEBHOOK_URL = os.getenv('WEBHOOK_URL_LOCAL')
+    TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN_TEST')
+
+else:
+    TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+    WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 REMINDER_TIME = "09:00"  # Default reminder time.
 
 # Google Sheets Service Account configuration
@@ -395,7 +403,7 @@ def handle_input(message):
         user_input = message.text
 
     user_data[user_id]['user_input'] = user_input
-    habit_properties, required_habits = USER_HABIT_PROPS.get(user_id, ({}, []))
+    habit_properties, required_habits = parse_habit_properties(FULL_CONFIGs[user_id].get("habits", {}))
 
     function_parameters = {
         "type": "object",
