@@ -531,7 +531,7 @@ def edit(message):
     else:
         correction = message.text
 
-    habit_properties, required_habits = USER_HABIT_PROPS.get(user_id, ({}, []))
+    habit_properties, required_habits = parse_habit_properties(FULL_CONFIGs[user_id].get("habits", {}))
 
     function_parameters = {
         "type": "object",
