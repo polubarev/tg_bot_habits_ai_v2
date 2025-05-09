@@ -27,7 +27,7 @@ load_dotenv(override=True)
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-debug = False
+debug = True
 
 # Use environment variables and default values since local config.json is no longer needed.
 if debug:
@@ -156,6 +156,23 @@ def health_check():
 
 # --- Google Sheets helper functions ---
 
+def ensure_raw_input_column(sheet: gspread.worksheet):
+    header = sheet.row_values(1)
+    lower = [h.lower() for h in header]
+
+    if "raw_input" not in lower:
+        # find the index of "date" (0-based)
+        try:
+            date_idx = lower.index("date")
+        except ValueError:
+            date_idx = 1
+
+
+        sheet.insert_cols(values=[['raw_input']], col=date_idx+2)
+
+
+
+
 def append_to_user_sheet(user_id, date_val, datetime_val, json_data):
     """
     Append a row of habit data to the user's linked Google Sheet by mapping the JSON keys
@@ -169,10 +186,17 @@ def append_to_user_sheet(user_id, date_val, datetime_val, json_data):
     if user_id not in user_sheets:
         logging.info(f"User {user_id} has not linked a Google Sheet.")
         return False
+    
     sheet_id = user_sheets[user_id]
     try:
         sheet = gc.open_by_key(sheet_id).worksheet("Diary Raw")
         header = sheet.row_values(1)  # Retrieve header row from the sheet
+        
+        # Log the header and data for debugging
+        logging.info(f"Sheet header: {header}")
+        logging.info(f"JSON data: {json_data}")
+        logging.info(f"Raw input: {user_data[user_id].get('user_input', '')}")
+        
         row = []
         for col in header:
             if col.lower() == "datetime":
@@ -180,13 +204,23 @@ def append_to_user_sheet(user_id, date_val, datetime_val, json_data):
             elif col.lower() == "date":
                 row.append(date_val)
             elif col.lower() == "raw_input":
-                row.append(user_data[user_id].get('user_input', ''))
+                raw_input = user_data[user_id].get('user_input', '')
+                row.append(raw_input)
             elif col in json_data:
-                row.append(json_data[col])
+                value = json_data[col]
+                # Convert any non-string values to string
+                if not isinstance(value, str):
+                    value = str(value)
+                row.append(value)
             else:
                 row.append("")
+        
+        # Log the final row for debugging
+        logging.info(f"Appending row: {row}")
+        
+        # Append the row to the sheet
         sheet.append_row(row, value_input_option='USER_ENTERED')
-        logging.info(f"Appended habit data for user {user_id} to sheet {sheet_id}.")
+        logging.info(f"Successfully appended habit data for user {user_id} to sheet {sheet_id}.")
         return True
     except Exception as e:
         logging.error(f"Error updating sheet for user {user_id}: {e}")
@@ -397,15 +431,20 @@ def handle_input(message):
     if message.text and message.text.lower() == 'cancel':
         cancel_process(message)
         return
+
+    # Store the raw input first
     if message.voice:
         user_input = transcribe_voice_message(message)
         if user_input is None:
             bot.reply_to(message, "Sorry, I couldn't process your voice message. Please try again.")
             return
+        # Store the transcribed text as raw input
+        user_data[user_id]['user_input'] = user_input
     else:
+        # Store the raw text input
         user_input = message.text
+        user_data[user_id]['user_input'] = user_input
 
-    user_data[user_id]['user_input'] = user_input
     habit_properties, required_habits = parse_habit_properties(FULL_CONFIGs[user_id].get("habits", {}))
 
     function_parameters = {
@@ -690,6 +729,7 @@ def sync_sheet_columns(user_id, updated_config):
     sheet_id = user_sheets[user_id]
     try:
         sheet = gc.open_by_key(sheet_id).worksheet("Diary Raw")
+        ensure_raw_input_column(sheet)
     except Exception:
         # If "Diary Raw" doesn't exist, use default sheet1 and rename it later if needed.
         sheet = gc.open_by_key(sheet_id).sheet1
@@ -888,34 +928,70 @@ def create_diary_sheets(user_id):
     sheet_id = user_sheets.get(user_id)
     if not sheet_id:
         return
+
     try:
         spreadsheet = gc.open_by_key(sheet_id)
-        # Create "Diary Raw" if it doesn't exist.
+
+        # — Diary Raw —
         try:
-            spreadsheet.worksheet("Diary Raw")
+            raw = spreadsheet.worksheet("Diary Raw")
         except Exception:
-            # Create with default 100 rows and columns equal to 5 (will be updated later).
-            spreadsheet.add_worksheet(title="Diary Raw", rows=100, cols=5)
-        # Create "Diary" if it doesn't exist.
+            raw = spreadsheet.add_worksheet(title="Diary Raw", rows=100, cols=10)
+            # initialize header on brand-new sheet
+            raw.update(
+                values=[["datetime", "date", "raw_input"]],
+                range_name="1:1"
+            )
+        ensure_raw_input_column(raw)
+
+        # — Diary (aggregated) —
         try:
-            spreadsheet.worksheet("Diary")
+            diary = spreadsheet.worksheet("Diary")
         except Exception:
-            spreadsheet.add_worksheet(title="Diary", rows=100, cols=5)
-        # Create "Dreams" if it doesn't exist.
+            diary = spreadsheet.add_worksheet(title="Diary", rows=100, cols=10)
+            diary.update(
+                values=[["datetime", "date", "raw_input"]],
+                range_name="1:1"
+            )
+        ensure_raw_input_column(diary)
+
+        # — Dreams —
         try:
-            spreadsheet.worksheet("Dreams")
+            dreams = spreadsheet.worksheet("Dreams")
         except Exception:
-            dreams_sheet = spreadsheet.add_worksheet(title="Dreams", rows=100, cols=3)
-            dreams_sheet.update(values=[["datetime", "date", "dream"]], range_name="A1")
-        # Create "Thoughts" if it doesn't exist.
+            dreams = spreadsheet.add_worksheet(title="Dreams", rows=100, cols=10)
+            dreams.update(
+                values=[["datetime", "date", "raw_input", "dream"]],
+                range_name="1:1"
+            )
+        else:
+            ensure_raw_input_column(dreams)
+            hdr = dreams.row_values(1)
+            if "dream" not in hdr:
+                hdr.append("dream")
+                dreams.update(values=[hdr], range_name="1:1")
+
+        # — Thoughts —
         try:
-            spreadsheet.worksheet("Thoughts")
+            thoughts = spreadsheet.worksheet("Thoughts")
         except Exception:
-            thoughts_sheet = spreadsheet.add_worksheet(title="Thoughts", rows=100, cols=3)
-            thoughts_sheet.update(values=[["datetime", "date", "thought"]], range_name="A1")
-        logging.info(f"Diary, Dreams and Thoughts worksheets created/verified for user {user_id}.")
+            thoughts = spreadsheet.add_worksheet(title="Thoughts", rows=100, cols=10)
+            thoughts.update(
+                values=[["datetime", "date", "raw_input", "thought"]],
+                range_name="1:1"
+            )
+        else:
+            ensure_raw_input_column(thoughts)
+            hdr = thoughts.row_values(1)
+            if "thought" not in hdr:
+                hdr.append("thought")
+                thoughts.update(values=[hdr], range_name="1:1")
+
+        logging.info(f"Verified/created all worksheets with raw_input column for user {user_id}.")
     except Exception as e:
         logging.error(f"Error creating diary worksheets for user {user_id}: {e}")
+
+
 
 
 # Updated /set_sheet command:
@@ -1067,15 +1143,18 @@ def confirm_dream(message):
                 except Exception:
                     # Create Dreams sheet if it doesn't exist
                     spreadsheet = gc.open_by_key(sheet_id)
-                    sheet = spreadsheet.add_worksheet(title="Dreams", rows=100, cols=3)
-                    sheet.update(values=[["datetime", "date", "dream"]], range_name="A1")
+                    sheet = spreadsheet.add_worksheet(title="Dreams", rows=100, cols=4)
+                    sheet.update(values=[["datetime", "date", "raw_input", "dream"]], range_name="A1")
 
                 current_datetime = datetime.datetime.now()
                 date_val = current_datetime.strftime('%Y-%m-%d')
                 datetime_val = current_datetime.strftime('%Y-%m-%d %H:%M:%S')
 
-                sheet.append_row([datetime_val, date_val, user_data[user_id]['dream_text']],
-                                 value_input_option='USER_ENTERED')
+                raw = user_data[user_id]['dream_text']
+                sheet.append_row(
+                    [datetime_val, date_val, raw, raw],
+                    value_input_option='USER_ENTERED'
+                )
                 bot.send_message(message.chat.id, "Your dream has been saved successfully!",
                                  reply_markup=command_markup)
                 logging.info(f"Dream saved for user {user_id}.")
@@ -1196,13 +1275,17 @@ def confirm_thoughts(message):
                     sheet = gc.open_by_key(sheet_id).worksheet("Thoughts")
                 except Exception:
                     spreadsheet = gc.open_by_key(sheet_id)
-                    sheet = spreadsheet.add_worksheet(title="Thoughts", rows=100, cols=3)
-                    sheet.update(values=[["datetime", "date", "thought"]], range_name="A1")
+                    sheet = spreadsheet.add_worksheet(title="Thoughts", rows=100, cols=4)
+                    sheet.update(values=[["datetime", "date", "raw_input", "thought"]], range_name="A1")
                 current_datetime = datetime.datetime.now()
                 date_val = current_datetime.strftime('%Y-%m-%d')
                 datetime_val = current_datetime.strftime('%Y-%m-%d %H:%M:%S')
-                sheet.append_row([datetime_val, date_val, user_data[user_id]['thought_text']],
-                                 value_input_option='USER_ENTERED')
+                
+                raw = user_data[user_id]['thought_text']
+                sheet.append_row(
+                    [datetime_val, date_val, raw, raw],
+                    value_input_option='USER_ENTERED'
+                )
                 bot.send_message(message.chat.id, "Your thoughts have been saved successfully!",
                                  reply_markup=command_markup)
                 logging.info(f"Thoughts saved for user {user_id}.")
