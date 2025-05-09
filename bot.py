@@ -63,7 +63,7 @@ except FileNotFoundError:
 if hasattr(creds, "with_scopes"):
     gcs_creds = creds.with_scopes(all_scopes)
 else:
-    # Fallback in case your Credentials class doesn’t support with_scopes
+    # Fallback in case your Credentials class doesn't support with_scopes
     gcs_creds = Credentials.from_service_account_file(
         credentials_path,
         scopes=all_scopes
@@ -124,7 +124,7 @@ app = Flask(__name__)  # Initialize Flask app
 
 
 def save_user_settings(user_id: int):
-    """Persist this user’s sheet + config + timezone to GCS."""
+    """Persist this user's sheet + config + timezone to GCS."""
     data = {
         'sheet_id': user_sheets.get(user_id),
         'config': FULL_CONFIGs.get(user_id, {}),
@@ -136,7 +136,7 @@ def save_user_settings(user_id: int):
 
 
 def load_all_user_settings():
-    """Load every user’s JSON from GCS into in‑memory dicts."""
+    """Load every user's JSON from GCS into in‑memory dicts."""
     prefix = 'settings/'
     for blob in _settings_bucket.list_blobs(prefix=prefix):
         # blob.name == 'settings/12345.json'
@@ -162,6 +162,7 @@ def append_to_user_sheet(user_id, date_val, datetime_val, json_data):
     to the existing columns in the sheet. For each column header:
       - If the header is 'date', use date_val.
       - If the header is 'datetime', use datetime_val.
+      - If the header is 'raw_input', use the raw input text.
       - If the header matches a key in json_data, use its value.
       - Otherwise, leave it blank.
     """
@@ -174,10 +175,12 @@ def append_to_user_sheet(user_id, date_val, datetime_val, json_data):
         header = sheet.row_values(1)  # Retrieve header row from the sheet
         row = []
         for col in header:
-            if col.lower() == "date":
-                row.append(date_val)
-            elif col.lower() == "datetime":
+            if col.lower() == "datetime":
                 row.append(datetime_val)
+            elif col.lower() == "date":
+                row.append(date_val)
+            elif col.lower() == "raw_input":
+                row.append(user_data[user_id].get('user_input', ''))
             elif col in json_data:
                 row.append(json_data[col])
             else:
@@ -420,7 +423,8 @@ def handle_input(message):
                     "content": (
                         "You are a bot that extracts user habits from their daily description. "
                         "Extract the following habits and provide the output in JSON format. "
-                        "Ensure that the 'diary' field is grammatically correct."
+                        "Ensure that the 'diary' field is is matching the input description fully, but fix typos and "
+                        "punctuation."
                     )
                 },
                 {"role": "user", "content": user_input}
@@ -548,7 +552,8 @@ def edit(message):
                     "content": (
                         "You are a bot that extracts user habits from their daily description. "
                         "Extract the following habits and provide the output in JSON format. "
-                        "Ensure that the 'diary' field is grammatically correct."
+                        "Ensure that the 'diary' field is is matching the input description fully, but fix typos and "
+                        "punctuation."
                     )
                 },
                 {"role": "user", "content": user_data[user_id]['user_input']},
@@ -632,7 +637,7 @@ def manual_input(message):
 def update_config_command(message):
     user_id = message.from_user.id
 
-    # 1️⃣ Ensure they’ve linked a sheet
+    # 1️⃣ Ensure they've linked a sheet
     if user_id not in user_sheets:
         return bot.send_message(
             message.chat.id,
@@ -659,7 +664,7 @@ def update_config_command(message):
         display = html.escape(json.dumps(example_cfg, ensure_ascii=False, indent=4))
         bot.send_message(
             message.chat.id,
-            "No configuration found. Here’s an example to get you started:\n"
+            "No configuration found. Here's an example to get you started:\n"
             f"<pre>{display}</pre>\n\n"
             "Please send me your updated configuration in JSON format.",
             parse_mode='HTML',
@@ -691,7 +696,7 @@ def sync_sheet_columns(user_id, updated_config):
     current_header = sheet.row_values(1)
     if not current_header:
         current_header = []
-    # Ensure first two columns are "datetime" and "date"
+    # Ensure first three columns are "datetime", "date", and "raw_input"
     if len(current_header) < 1 or current_header[0].lower() != "datetime":
         # Remove any duplicates
         current_header = [col for col in current_header if col.lower() != "datetime"]
@@ -699,6 +704,9 @@ def sync_sheet_columns(user_id, updated_config):
     if len(current_header) < 2 or current_header[1].lower() != "date":
         current_header = [col for col in current_header if col.lower() != "date"]
         current_header.insert(1, "date")
+    if len(current_header) < 3 or current_header[2].lower() != "raw_input":
+        current_header = [col for col in current_header if col.lower() != "raw_input"]
+        current_header.insert(2, "raw_input")
     # Add new habit keys if not already present.
     new_habits = list(updated_config["habits"].keys())
     for habit in new_habits:
@@ -849,7 +857,7 @@ def handle_updated_config(message):
             "Habits config errors:\n" + "\n".join(errors)
         )
 
-    # ✅ Everything’s valid — update in-memory
+    # ✅ Everything's valid — update in-memory
     FULL_CONFIGs[user_id] = new_cfg
 
     props, reqs = parse_habit_properties(new_cfg.get("habits", {}))
@@ -964,7 +972,7 @@ def send_reminders():
             now = datetime.datetime.utcnow()
         if now.strftime('%H:%M') == REMINDER_TIME:
             bot.send_message(uid,
-                             "⏰ Reminder: don't forget to track today’s habits! Use /habits",
+                             "⏰ Reminder: don't forget to track today's habits! Use /habits",
                              reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True)
                              .add('/habits', '/help', '/cancel')
                              )
