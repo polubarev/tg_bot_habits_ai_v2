@@ -27,7 +27,7 @@ load_dotenv(override=True)
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-debug = True
+debug = False
 
 # Use environment variables and default values since local config.json is no longer needed.
 if debug:
