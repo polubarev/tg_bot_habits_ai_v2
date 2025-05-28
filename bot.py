@@ -1,5 +1,4 @@
 import os
-import json
 import datetime
 import threading
 import time
@@ -7,16 +6,14 @@ import logging
 import schedule
 import telebot
 import gspread
-from google.oauth2.service_account import Credentials  # Updated authorization
+from google.oauth2.service_account import Credentials
 from telebot import types
 from dotenv import load_dotenv
 from validate_config import validate_habits, config_schema
-import jsonschema
-# from jsonschema import validate
 import html
 import pytz
 from openai import OpenAI
-from flask import Flask, request, abort
+from flask import Flask, request
 from google.cloud import storage
 import json
 from jsonschema import validate as js_validate
@@ -811,51 +808,6 @@ def aggregate_diary(user_id):
         logging.error(f"Error aggregating diary for user {user_id}: {e}")
 
 
-# @bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == UPDATING_CONFIG)
-# def handle_updated_config(message):
-#     user_id = message.from_user.id
-#     logging.info(f"User {user_id} is providing updated config.")
-#     if message.text and message.text.lower() == 'cancel':
-#         cancel_process(message)
-#         return
-#     try:
-#         updated_config = json.loads(message.text)
-#         try:
-#             validate(instance=updated_config, schema=config_schema)
-#         except jsonschema.exceptions.ValidationError as err:
-#             bot.reply_to(message, f"Configuration Error: {err.message}")
-#             return
-#
-#         is_valid, errors = validate_habits(updated_config['habits'])
-#         if not is_valid:
-#             error_messages = "\n".join(errors)
-#             bot.reply_to(message, f"Invalid habits configuration:\n{error_messages}")
-#             return
-#
-#         # Do NOT update local config.json; config is per user.
-#         # Update global configuration variables after config update.
-#         global FULL_CONFIG, habit_properties, required_habits, REMINDER_TIME
-#         FULL_CONFIG = updated_config
-#         REMINDER_TIME = updated_config.get("reminder_time", REMINDER_TIME)
-#         habit_properties, required_habits = parse_habit_properties(FULL_CONFIG["habits"])
-#
-#         # Store user timezone if provided.
-#         if "timezone" in updated_config:
-#             user_timezones[user_id] = updated_config["timezone"]
-#         else:
-#             # Default to UTC if not specified.
-#             user_timezones[user_id] = "UTC"
-#
-#         bot.send_message(message.chat.id, "Configuration has been updated successfully.", reply_markup=command_markup)
-#         logging.info(f"Configuration updated by user {user_id}.")
-#         user_states[user_id] = None
-#         user_setup_complete.add(user_id)
-#         # Synchronize the user's Google Sheet columns.
-#         sync_sheet_columns(user_id, updated_config)
-#     except json.JSONDecodeError as e:
-#         logging.error(f"JSON decode error for user {user_id}: {e}")
-#         bot.reply_to(message, "Invalid JSON format. Please try again.")
-
 @bot.message_handler(func=lambda msg: user_states.get(msg.from_user.id) == UPDATING_CONFIG)
 def handle_updated_config(message):
     user_id = message.from_user.id
@@ -1337,13 +1289,17 @@ def edit_thoughts(message):
     user_states[user_id] = THOUGHTS_CONFIRMING
 
 
-# def run_flask():
-#     port = int(os.environ.get("PORT", 8080))
-#     app.run(host="0.0.0.0", port=port)
-
 @app.route(f"/{TELEGRAM_TOKEN}", methods=['POST'])
 def webhook():
-    update = telebot.types.Update.de_json(request.get_data().decode('utf-8'))
+    update_json = request.get_data().decode('utf-8')
+    # Try to parse to get update_id early, or log the raw JSON if parsing fails
+    try:
+        temp_update_for_id = telebot.types.Update.de_json(update_json)
+        logging.info(f"Webhook received. Update ID: {temp_update_for_id.update_id}, Raw data: {update_json}")
+    except Exception as e:
+        logging.error(f"Webhook received. Could not parse update_id early. Raw data: {update_json}, Error: {e}")
+
+    update = telebot.types.Update.de_json(update_json) # Your original parsing
     bot.process_new_updates([update])
     return '', 200
 
