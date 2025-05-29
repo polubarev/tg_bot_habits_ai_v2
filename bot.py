@@ -13,7 +13,7 @@ from validate_config import validate_habits, config_schema
 import html
 import pytz
 from openai import OpenAI
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from google.cloud import storage
 import json
 from jsonschema import validate as js_validate
@@ -1289,19 +1289,39 @@ def edit_thoughts(message):
     user_states[user_id] = THOUGHTS_CONFIRMING
 
 
+# @app.route(f"/{TELEGRAM_TOKEN}", methods=['POST'])
+# def webhook():
+#     update_json = request.get_data().decode('utf-8')
+#     # Try to parse to get update_id early, or log the raw JSON if parsing fails
+#     try:
+#         temp_update_for_id = telebot.types.Update.de_json(update_json)
+#         logging.info(f"Webhook received. Update ID: {temp_update_for_id.update_id}, Raw data: {update_json}")
+#     except Exception as e:
+#         logging.error(f"Webhook received. Could not parse update_id early. Raw data: {update_json}, Error: {e}")
+#
+#     update = telebot.types.Update.de_json(update_json) # Your original parsing
+#     bot.process_new_updates([update])
+#     return '', 200
+
+
 @app.route(f"/{TELEGRAM_TOKEN}", methods=['POST'])
 def webhook():
-    update_json = request.get_data().decode('utf-8')
-    # Try to parse to get update_id early, or log the raw JSON if parsing fails
-    try:
-        temp_update_for_id = telebot.types.Update.de_json(update_json)
-        logging.info(f"Webhook received. Update ID: {temp_update_for_id.update_id}, Raw data: {update_json}")
-    except Exception as e:
-        logging.error(f"Webhook received. Could not parse update_id early. Raw data: {update_json}, Error: {e}")
+    # 1) grab the JSON
+    update_json = request.get_json(force=True)
+    update = telebot.types.Update.de_json(update_json)
 
-    update = telebot.types.Update.de_json(update_json) # Your original parsing
-    bot.process_new_updates([update])
-    return '', 200
+    # 2) return 200 right away
+    #    so Telegram knows we got it and won't retry
+    resp = jsonify({"status": "received"})
+    resp.status_code = 200
+
+    # 3) process in a daemon thread
+    threading.Thread(
+        target=lambda: bot.process_new_updates([update]),
+        daemon=True
+    ).start()
+
+    return resp
 
 
 if __name__ == '__main__':
@@ -1312,8 +1332,9 @@ if __name__ == '__main__':
     bot.remove_webhook()
     bot.set_webhook(url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
 
-    # 2. start scheduler thread
-    threading.Thread(target=schedule_checker, daemon=True).start()
+    # # 2. start scheduler thread
+    # threading.Thread(target=schedule_checker, daemon=True).start()
 
     # 3. run Flask
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8080, debug=False, use_reloader=False)
+
