@@ -17,6 +17,7 @@ from flask import Flask, request, jsonify
 from google.cloud import storage
 import json
 from jsonschema import validate as js_validate
+from cachetools import TTLCache
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -25,6 +26,9 @@ load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 debug = False
+
+# Keep up to 2 000 recent update_ids in memory, expire them after 5 minutes
+_processed_updates = TTLCache(maxsize=2000, ttl=300)
 
 # Use environment variables and default values since local config.json is no longer needed.
 if debug:
@@ -753,6 +757,22 @@ def sync_sheet_columns(user_id, updated_config):
     logging.info(f"Synchronized sheet header for user {user_id} to: {current_header}")
 
 
+def parse_known_formats(dt_str: str) -> datetime.datetime:
+    """Try each known format until one parses successfully."""
+    candidates = [
+        '%d-%m-%Y %H:%M:%S',
+        '%Y-%m-%d %H:%M:%S',
+        # add more patterns here if needed
+    ]
+    for fmt in candidates:
+        try:
+            return datetime.datetime.strptime(dt_str, fmt)
+        except ValueError:
+            continue
+    # if we get here, none of the formats matched
+    raise ValueError(f"No matching format found for {dt_str!r}")
+
+
 # New helper function to aggregate the diary:
 def aggregate_diary(user_id):
     if user_id not in user_sheets:
@@ -787,8 +807,10 @@ def aggregate_diary(user_id):
             day = row[idx_date]
             dt_str = row[idx_datetime]
             try:
-                dt = datetime.datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
+                dt = parse_known_formats(dt_str)
+                # dt = parser.parse(dt_str, dayfirst=False)
             except Exception:
+                logging.error(f"Cannot parse a datetime {dt_str}")
                 continue
             # Keep record if day not seen or dt is later than stored record.
             if day not in aggregated or dt > aggregated[day]["dt"]:
@@ -1309,7 +1331,16 @@ def webhook():
     # 1) grab the JSON
     update_json = request.get_json(force=True)
     update = telebot.types.Update.de_json(update_json)
+    uid = update.update_id
 
+    # 2) idempotency check: skip if we've seen this update_id recently
+    if uid in _processed_updates:
+        logging.warning(f"Ignoring duplicate update_id={uid}")
+        # still return 200 so Telegram stops retrying
+        return jsonify({"status": "duplicate"}), 200
+
+    # mark as processed
+    _processed_updates[uid] = time.time()
     # 2) return 200 right away
     #    so Telegram knows we got it and won't retry
     resp = jsonify({"status": "received"})
